@@ -17,14 +17,16 @@ Planning and implementation require different kinds of intelligence. A strong mo
 
 Specship turns that division of labor into an auditable workflow:
 
-```mermaid
-flowchart LR
-    A["Strong model: $spec"] --> B["Plan artifacts"]
-    B --> C["Workhorse model: $ship"]
-    C --> D["Strong model: $spec review"]
-    D -->|Issues remain| C
-    D -->|Review passes| E["User confirmation"]
-    E --> F["$spec finalize"]
+```text
+$spec plan
+    ↓
+Plan artifacts
+    ↓
+$ship implement the complete plan
+    ↓
+$spec review
+    ├── Issues remain → $ship corrective work → $spec review
+    └── Review passes → User confirmation → $spec finalize
 ```
 
 ## Responsibilities
@@ -105,7 +107,7 @@ $spec finalize docs/plans/organization-switching
 
 Only finalization updates applicable project records such as `docs/tasks.md`, `docs/devlog.md`, and affected setup, testing, API, UI, architecture, or codebase-map documentation.
 
-## Install on another computer
+## Installation
 
 ### Requirements
 
