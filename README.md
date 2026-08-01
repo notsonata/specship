@@ -1,59 +1,74 @@
 # Specship
 
-Specship separates high-judgment planning from bounded implementation by giving each role its own Codex skill:
+Specship is a two-model workflow for Codex that separates high-judgment specification and review from full-plan implementation:
 
-- **`$spec`** uses a stronger model to investigate, clarify, specify, review, and explicitly finalize work.
-- **`$ship`** uses a faster workhorse model to implement the complete plan, validate it, and record evidence.
+- **`$spec`** uses a stronger model to investigate, clarify material ambiguity, write a sealed implementation contract, review the result, and explicitly finalize confirmed work.
+- **`$ship`** uses a faster workhorse model to implement or resume the complete sealed plan, validate it, and record revision-pinned evidence.
 
-The two skills communicate through durable Markdown artifacts under `docs/plans/`, so they can run in separate conversations without sharing chat history.
+The skills communicate through durable Markdown artifacts under `docs/plans/`, so they can run in separate Codex conversations without shared chat history.
 
-> **Status: private preview.** Specship is being dogfooded and is not ready for public distribution or skills.sh listing yet.
+> **Status: public source preview.** The repository is public so the workflow can be installed across devices and dogfooded in real projects. Specship is not considered publicly released, production-ready, or ready for a skills.sh or plugin submission yet.
 >
-> **Built for Codex.** Specship is designed and validated around Codex skill discovery, `$skill` invocation, repository instructions, and shared-workspace behavior. Other Agent Skills-compatible tools may work, but they are secondary and currently unverified targets.
+> **Built for Codex.** Specship is designed and validated around Codex skill discovery, `$skill` invocation, repository instructions, and shared-workspace behavior. Other Agent Skills-compatible tools are currently unverified.
 
 ## Why Specship?
 
-Planning and implementation require different kinds of intelligence. A strong model is most valuable when it is resolving ambiguity, understanding architecture, defining success, and reviewing results. Once that judgment is captured in a precise plan, a less expensive model can execute narrow tasks without repeatedly rediscovering the project.
+Planning and implementation reward different strengths. A strong model is most useful when resolving ambiguity, understanding architecture, defining observable success, and reviewing the result. Once that judgment becomes a precise contract, a faster model can execute the bounded work without rediscovering product intent.
 
-Specship turns that division of labor into an auditable workflow:
+Specship makes that division auditable:
 
 ```text
 $spec plan
-    ↓
-Plan artifacts
-    ↓
-$ship implement the complete plan
-    ↓
+    |
+    v
+Sealed, versioned plan contract
+    |
+    v
+$ship implements the complete plan
+    |
+    v
 $spec review
-    ├── Issues remain → $ship corrective work → $spec review
-    └── Review passes → User confirmation → $spec finalize
+    |-- issues remain --> new contract revision --> $ship --> $spec review
+    `-- review passes --> user confirmation --> $spec finalize
 ```
+
+`$spec` never implements, even for a tiny fix. `$ship` never executes only one selected task: it implements or resumes one complete plan and then stops for review.
 
 ## Responsibilities
 
 | Skill | Recommended model | Responsibilities | Must not do |
 | --- | --- | --- | --- |
-| `$spec` | Higher-intelligence model | Investigate, grill ambiguity, write specifications and plans, review implementation, finalize confirmed work | Implement source changes, silently assume material requirements, finalize without user confirmation |
-| `$ship` | Faster, cheaper workhorse model | Implement every task in one ready plan, run task-level and plan-wide validation, append execution evidence | Invent requirements, broaden scope, perform review, update canonical post-implementation docs |
+| `$spec` | Higher-intelligence model | Investigate, clarify material ambiguity, write and seal contracts, review implementation, finalize confirmed work | Implement source changes, hide material assumptions, edit execution history, finalize without confirmation |
+| `$ship` | Faster workhorse model | Implement every runnable task in one plan, run validation, append evidence, resume interrupted execution | Edit the contract, invent requirements, broaden scope, review, update canonical completion docs |
 
-## Plan artifacts
+## Plan contract
 
 Every request receives a plain-slug folder:
 
 ```text
 docs/plans/<plan>/
-├── CONTEXT.md   # Original request, evidence, questions, answers, and decisions
-├── SPEC.md      # Requirements, constraints, behavior, and acceptance criteria
-├── PLAN.md      # Ordered, bounded implementation tasks
-├── RESULTS.md   # Execution evidence appended by $ship
-└── REVIEW.md    # Review rounds and finalization record written by $spec
+|-- CONTEXT.md   # Request, evidence, questions, decisions, assumptions
+|-- SPEC.md      # Requirements, constraints, behavior, acceptance criteria
+|-- PLAN.md      # Ordered full-plan implementation tasks
+|-- STATE.md     # Lifecycle, revision, digest, baselines, task state
+|-- RESULTS.md   # Append-only execution evidence from $ship
+`-- REVIEW.md    # Append-only review and finalization evidence from $spec
 ```
 
-`CONTEXT.md` preserves the clarification trail. Decisions are superseded rather than silently erased, allowing a fresh model to understand why the plan looks the way it does.
+The ownership boundary is strict:
+
+| Artifact | Owner | Rule |
+| --- | --- | --- |
+| `CONTEXT.md`, `SPEC.md`, `PLAN.md` | `$spec` | Immutable after sealing; any change starts a new contract revision |
+| `STATE.md` | Bundled validator | Neither model hand-edits lifecycle or task state |
+| `RESULTS.md` | `$ship` | Append-only and pinned to the contract revision and digest |
+| `REVIEW.md` | `$spec` | Append-only and pinned to the reviewed revision and digest |
+
+Sealing records a SHA-256 digest of the three contract artifacts plus the Git HEAD, branch, unrelated dirty-file set, and dirty-content fingerprint. `$ship` refuses to start if the contract was edited or the repository baseline drifted. A new `$spec refine` revision invalidates old completion state rather than letting stale evidence satisfy a changed plan.
 
 ## Workflow
 
-Use separate conversations so each model receives only the context appropriate to its role. The shared repository and plan folder are the handoff mechanism.
+Use separate Codex conversations. The repository and plan folder are the handoff mechanism.
 
 ### 1. Plan with the strong model
 
@@ -63,9 +78,9 @@ Open a conversation using the stronger model:
 $spec Add organization switching to the account settings flow.
 ```
 
-`$spec` inspects the repository, creates `docs/plans/<plan>/CONTEXT.md`, asks evidence-driven clarification questions, and writes `SPEC.md` and `PLAN.md`. It does not implement the plan.
+`$spec` investigates before asking questions. It asks only when ambiguity can materially change the contract; a precise request may need no questions. Blocking questions and their answers remain in `CONTEXT.md`.
 
-To incorporate new information:
+When ready, `$spec` seals the contract and gives the exact handoff command. To incorporate new information or repository drift:
 
 ```text
 $spec refine docs/plans/organization-switching
@@ -79,27 +94,27 @@ Open a separate conversation using the workhorse model:
 $ship implement this plan: docs/plans/organization-switching
 ```
 
-`$ship` executes every pending or reopened task in dependency order, runs task-level and plan-wide validation, updates plan-local status, appends evidence to `RESULTS.md`, and stops after the full plan is implemented.
+`$ship` validates the digest and Git baseline, executes every pending task in dependency order, runs task-level and plan-wide validation, appends evidence to `RESULTS.md`, and stops after the complete plan is implemented.
 
-If any task exposes a material ambiguity, `$ship` stops the plan and records the blocker instead of guessing. Return to the strong-model conversation and run `$spec refine` before retrying the plan.
+If the conversation is interrupted while `STATE.md` is `InProgress`, the same command in a new workhorse conversation resumes the full plan without repeating completed tasks. If implementation exposes a material contract ambiguity, `$ship` records the blocker without editing the contract and returns control to `$spec refine`.
 
 ### 3. Review with the strong model
 
-After the implementation tasks are complete:
+Return to the strong-model conversation:
 
 ```text
 $spec review docs/plans/organization-switching
 ```
 
-Review compares the actual changes with `SPEC.md` and writes a new round to `REVIEW.md`.
+Review checks the actual changes against the exact sealed revision and appends a round to `REVIEW.md`.
 
-- When issues remain, `$spec review` creates or reopens corrective tasks without fixing them.
-- When everything passes, it marks the plan `Ready for user confirmation`.
-- A passing review does **not** update canonical post-implementation documentation.
+- When issues remain, `$spec` creates and seals a new revision with bounded corrective tasks. It does not fix them.
+- When checks pass, the plan becomes `ReadyForConfirmation`.
+- Review never writes post-implementation canonical project updates.
 
 ### 4. Finalize only after confirmation
 
-After personally confirming that the result is good:
+After personally confirming the result:
 
 ```text
 $spec finalize docs/plans/organization-switching
@@ -107,18 +122,46 @@ $spec finalize docs/plans/organization-switching
 
 Only finalization updates applicable project records such as `docs/tasks.md`, `docs/devlog.md`, and affected setup, testing, API, UI, architecture, or codebase-map documentation.
 
+## Lifecycle
+
+```text
+Draft -> AwaitingClarification -> Ready -> InProgress
+                                      |-> Blocked -> new revision
+                                      |-> Failed  -> new revision
+                                      `-> Implemented
+                                            |-> ChangesRequired -> new revision
+                                            `-> ReadyForConfirmation -> Finalized
+```
+
+Lifecycle and task transitions are performed by the bundled validator, not by prose edits.
+
 ## Installation
 
 ### Requirements
 
 - Git
 - Node.js 18 or newer for `npx skills`
-- Codex or another agent compatible with the Agent Skills format
-- Access to the private Specship repository
+- Codex
 
-### Recommended: install globally for Codex
+### Install globally for Codex
 
-Clone the private repository using your authenticated GitHub account:
+Install both skills directly from the public repository for personal testing:
+
+```bash
+npx skills add notsonata/specship --skill spec --skill ship --agent codex --global --yes
+```
+
+Restart Codex if the skills do not appear. Type `$` and select `Spec` or `Ship`; these are dollar-invoked skills, not slash commands.
+
+### Install into one project
+
+Omit `--global` while inside the target repository:
+
+```bash
+npx skills add notsonata/specship --skill spec --skill ship --agent codex --yes
+```
+
+### Install from a local clone
 
 ```bash
 git clone https://github.com/notsonata/specship.git
@@ -126,66 +169,58 @@ cd specship
 npx skills add . --skill spec --skill ship --agent codex --global --yes
 ```
 
-Restart Codex if the newly installed skills do not appear. Type `$` in Codex and select `Spec` or `Ship`; skills are not invoked as slash commands.
-
-### Install into one project
-
-From the target project, install from the local Specship clone without `--global`:
-
-```bash
-cd /path/to/target-project
-npx skills add /path/to/specship --skill spec --skill ship --agent codex --yes
-```
-
-Project installation keeps the skills scoped to that repository. Global installation makes them available across projects for the current user.
-
-### Update an installation
-
-Pull the private repository, then run the same `npx skills add` command again:
-
-```bash
-cd /path/to/specship
-git pull
-npx skills add . --skill spec --skill ship --agent codex --global --yes
-```
+To update, pull the clone and run the same `npx skills add .` command again.
 
 ## Repository layout
 
 ```text
 .
-├── .agents/skills/
-│   ├── spec/
-│   │   ├── SKILL.md
-│   │   └── agents/openai.yaml
-│   └── ship/
-│       ├── SKILL.md
-│       └── agents/openai.yaml
-└── README.md
+|-- .agents/skills/
+|   |-- spec/
+|   |   |-- SKILL.md
+|   |   |-- agents/openai.yaml
+|   |   |-- references/
+|   |   `-- scripts/validate_plan.py
+|   `-- ship/
+|       |-- SKILL.md
+|       |-- agents/openai.yaml
+|       |-- references/
+|       `-- scripts/validate_plan.py
+|-- tests/
+|   |-- evaluations/cases.json
+|   |-- fixtures/draft-plan/
+|   `-- test_validate_plan.py
+`-- README.md
 ```
+
+Each skill contains its own validator and protocol references so it remains self-contained when installed. Tests ensure the copies stay byte-identical.
 
 ## Development and validation
 
-Before committing a skill change:
+Run before committing a skill change:
 
-1. Keep each skill focused and self-contained.
-2. Confirm both skills are discoverable:
+```bash
+python3 -m unittest discover -s tests -v
+python3 /path/to/skill-creator/scripts/quick_validate.py .agents/skills/spec
+python3 /path/to/skill-creator/scripts/quick_validate.py .agents/skills/ship
+npx skills add . --list
+```
 
-   ```bash
-   npx skills add . --list
-   ```
+The validator regression suite covers sealing, digest tampering, blocking questions, dependency errors, revisions, execution evidence, review/finalization gates, resumption state, and Git dirty-file and dirty-content drift. `tests/evaluations/cases.json` records the broader workflow scenarios to dogfood manually or automate later.
 
-3. Validate both skill folders with Codex's `skill-creator` validator.
-4. Test a complete plan → execute → review → correction → confirmation → finalize cycle.
-5. Verify that review never finalizes implicitly and that `$ship` never updates canonical completion docs.
+## Dogfooding gate
 
-## Private-preview release gate
+The source can remain public while the workflow stays an unreleased preview. Do not submit it to skills.sh, package it as a plugin, or describe it as production-ready until it has passed repeated end-to-end use across real projects.
 
-Keep the repository private until the pair has been tested across several real projects, including:
+At minimum, test:
 
-- a small bug fix;
-- a multi-task feature;
-- a plan blocked by unanswered requirements;
-- a review that requires corrective implementation;
-- a passing review where the user declines or delays finalization.
+- a precise one-file fix that needs no clarification;
+- a multi-task feature and a migration with rollback concerns;
+- an execution blocker returned to `$spec refine`;
+- stale Git and dirty-worktree baselines;
+- interrupted full-plan execution resumed in a new conversation;
+- a failed review followed by corrective work;
+- a passing review where finalization is delayed or declined;
+- refinement after partial implementation.
 
-Before any public release, also choose a license, evaluate whether the generic `spec` and `ship` names could collide with installed skills, test more than one supported agent, and review every instruction for repository-specific assumptions.
+Before considering a public release, also choose a license, evaluate skill-name collisions, decide whether plugin packaging is useful, test supported Codex surfaces, and review every protocol guarantee against the committed evaluation cases.

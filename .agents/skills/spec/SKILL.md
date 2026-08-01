@@ -1,201 +1,162 @@
 ---
 name: spec
-description: Investigate repository changes, resolve ambiguity with evidence-driven questions, and create self-contained specifications and implementation plans in named docs/plans folders for another model to execute. Use when the user invokes $spec or asks a strong planning model to plan, refine, review, or explicitly finalize implementation work without writing implementation code.
+description: Investigate repository changes, resolve material ambiguity, and create versioned implementation contracts under docs/plans for another model to execute; independently review results and finalize only after user confirmation. Use when the user invokes $spec to plan, refine, review, or finalize work without implementing source changes.
 ---
 
 # Spec
 
 Act as the strong-model planner and reviewer. Own judgment, clarification, specification, decomposition, review, and confirmed finalization. Never implement source-code changes, including tiny fixes.
 
-Keep the plan folder as the durable handoff between conversations. Do not rely on chat history that another model cannot see.
+Keep the plan folder as the durable handoff between conversations. Do not rely on chat history another model cannot see.
+
+## Load the protocol
+
+Before operating on a plan:
+
+1. Read `references/protocol.md` completely.
+2. Read `references/artifact-templates.md` when creating an artifact or checking its required shape.
+3. Resolve this skill's `scripts/validate_plan.py` to an absolute path and use it for every lifecycle, revision, digest, baseline, and task-state mutation.
+
+Do not hand-edit `STATE.md`.
 
 ## Choose the operation
 
-Interpret the invocation as one of these operations:
-
 - `$spec <request>`: create a new plan.
-- `$spec refine docs/plans/<plan> [new information]`: resolve questions or revise an existing plan.
-- `$spec review docs/plans/<plan>`: inspect completed work and write a review without finalizing it.
-- `$spec finalize docs/plans/<plan>`: after explicit user confirmation, perform post-implementation documentation updates and close the plan.
+- `$spec refine docs/plans/<plan> [new information]`: resolve questions or revise a plan.
+- `$spec review docs/plans/<plan>`: independently inspect implementation and append a review round.
+- `$spec finalize docs/plans/<plan>`: after explicit user confirmation, update applicable canonical docs and close the plan.
 
-If the operation or plan folder is ambiguous, ask before writing to an existing plan. Never silently replace an existing plan folder.
+Ask for the exact folder before writing if the operation or target is ambiguous. Never silently replace an existing plan folder.
 
-## Preserve the role boundary
+## Preserve ownership
 
+- Own `CONTEXT.md`, `SPEC.md`, and `PLAN.md`; `$ship` must never edit them.
+- Treat those three files as one immutable contract after sealing.
+- Run `revise` before changing a sealed contract. Never disguise a contract change as review evidence.
+- Treat `RESULTS.md` as `$ship`'s append-only record; do not rewrite it.
+- Append review and finalization evidence to `REVIEW.md`; preserve prior rounds.
 - Modify only plan artifacts during planning, refinement, and review.
-- Do not edit implementation files, tests, configuration, migrations, or product documentation to fix the implementation.
-- Do not sneak implementation into a documentation update.
-- Reserve canonical post-implementation documentation updates for explicit finalization.
-- Treat `RESULTS.md` as the executor's record; read it but do not rewrite its history.
+- Reserve canonical project documentation updates for explicit finalization.
+- Do not edit implementation files, tests, configuration, migrations, or product docs to fix reviewed code.
 
-## Use the plan-folder contract
+## Create a plan
 
-Store each plan at `docs/plans/<plain-kebab-case-slug>/`:
-
-```text
-CONTEXT.md  # request, evidence, questions, answers, decisions, assumptions, history
-SPEC.md     # behavior contract
-PLAN.md     # ordered execution contract
-RESULTS.md  # executor evidence; created and appended by $ship
-REVIEW.md   # review rounds and finalization record; created by $spec review
-```
-
-Use a short descriptive slug without a date. If the derived slug already exists, refine it only when the user intends to continue that plan; otherwise choose a distinct slug or ask.
-
-## Create a new plan
-
-### 1. Investigate before questioning
+### Investigate first
 
 1. Read applicable `AGENTS.md` files and only the project docs relevant to the request.
-2. Use the repository's preferred code-navigation mechanism. If `.codegraph/` exists, use CodeGraph before text search.
-3. Inspect the directly relevant implementation, tests, configuration, and history available locally.
+2. Use the repository's preferred navigation mechanism. If `.codegraph/` exists, use CodeGraph before text search.
+3. Inspect directly relevant implementation, tests, configuration, and local history.
 4. Separate verified facts from inferences and unknowns.
-5. Avoid asking the user for information that the repository can answer.
+5. Do not ask the user for facts the repository can answer.
 
-Do not change implementation files during investigation.
+Do not change implementation files.
 
-### 2. Start the durable context trail
+### Start the durable contract
 
-Create the plan folder and `CONTEXT.md` before asking the first clarification round. Include:
+Choose a short plain kebab-case slug and create `docs/plans/<plan>/`. If it exists, continue only when the user intends to refine it.
 
-- plan name and status;
-- the original request, preserving important wording;
-- inspected repository evidence with file or symbol references;
-- current behavior as understood;
-- known goals, constraints, and non-goals;
-- unresolved questions;
-- a clarification ledger;
-- a decision ledger;
-- an assumption ledger;
-- a revision history.
+Using the templates, create:
 
-Give questions, decisions, and assumptions stable IDs such as `Q-001`, `D-001`, and `A-001`. Preserve superseded entries and point to the newer decision instead of erasing history.
+- `CONTEXT.md` with the original request, evidence, goals, constraints, non-goals, clarification, decision, assumption, and revision ledgers;
+- `SPEC.md` with the behavior contract;
+- `PLAN.md` with the execution contract;
+- `STATE.md` in `Draft` with matching plan ID, protocol version, and revision.
 
-### 3. Grill material ambiguity
+Give questions, decisions, assumptions, requirements, and tasks stable IDs. Preserve superseded entries and explain their replacements.
 
-Ask evidence-driven questions in focused rounds, normally three to five grouped questions at a time.
+### Clarify only material ambiguity
+
+Ask focused, evidence-driven questions only when the answer can materially change scope, observable behavior, architecture, compatibility, data handling, security, rollout, reversibility, or acceptance criteria. There is no question quota. A precise small request may need none.
 
 For each question:
 
-- explain why the answer affects the implementation;
-- cite the repository evidence that created the uncertainty when available;
-- distinguish a blocking decision from an optional refinement;
+- explain why it affects implementation;
+- cite the evidence that created uncertainty when available;
+- mark it blocking or non-blocking;
 - ask for observable current and expected behavior;
-- challenge vague goals rather than translating them into hidden assumptions.
+- challenge a vague goal instead of hiding an assumption.
 
-Cover only relevant categories, such as scope, non-goals, affected users, compatibility, data migration, security, failure behavior, performance, rollout, reversibility, and validation.
+Record questions in `CONTEXT.md` before pausing. If blocking questions are open, transition Draft to `AwaitingClarification`. After answers, update the ledger before proceeding. If the user authorizes proceeding without an answer, record the assumption, risk, and authorization.
 
-Before pausing for the user, write the open questions to `CONTEXT.md`. After each answer, update the corresponding entries and decision trail before continuing. If answers conflict, surface the conflict. If the user explicitly asks to proceed without an answer, record the chosen assumption, its risk, and the user's authorization.
+Never seal a plan with an open blocking question.
 
-Do not mark a plan ready while blocking questions remain.
+### Write the specification
 
-### 4. Write the behavior contract
+Define observable outcomes, not implementation preferences, unless the repository or user requires a particular approach. Include:
 
-Create `SPEC.md` only after blocking ambiguity is resolved. Scale the detail to the task, but include:
-
-- problem and desired outcome;
-- verified current behavior;
+- problem, desired outcome, and verified current behavior;
 - scope and explicit non-goals;
-- requirements with stable IDs such as `REQ-001`;
+- `REQ-NNN` requirements, each with an `Acceptance criteria` field;
 - constraints and invariants;
-- user-visible scenarios, edge cases, and failure behavior;
-- acceptance criteria mapped to requirements;
-- validation expectations;
-- explicitly accepted non-blocking risks.
+- user-visible scenarios, edge cases, and failures;
+- validation expectations and accepted non-blocking risks.
 
-Write requirements as observable outcomes. Do not encode an implementation preference as a requirement unless the repository or user requires it.
+### Write the full-plan execution contract
 
-### 5. Write the execution contract
+Create dependency-ordered `TASK-NNN` sections using the template. Each task must identify linked requirements, objective, rationale, dependencies, verified files or symbols, explicit implementation steps, behavior to preserve, validation, acceptance criteria, evidence, and out-of-scope work.
 
-Create `PLAN.md` as an ordered set of bounded tasks. Keep each task executable by a workhorse model without requiring it to rediscover product intent or make architecture decisions.
+Keep the complete plan small enough for one workhorse conversation to execute. If the requested program is too large for that boundary, split it into multiple independently reviewable plan folders and state their ordering. Never turn `$ship` into a one-task invocation.
 
-Use this task shape:
+Keep canonical post-implementation documentation synchronization out of `$ship` tasks. Documentation is an implementation task only when it is itself the requested product.
 
-```markdown
-## TASK-001: Descriptive outcome
+### Seal the contract
 
-- **Status**: Pending
-- **Requirements**: REQ-001
-- **Objective**: Observable result produced by this task
-- **Rationale**: Why the task is necessary
-- **Dependencies**: Prior tasks or prerequisites
-- **Files and symbols**: Verified paths and relevant code locations
-- **Implementation instructions**: Ordered, explicit changes
-- **Preserve**: Existing behavior that must not change
-- **Validation**: Exact commands and meaningful manual checks
-- **Acceptance criteria**: Conditions required to mark the task done
-- **Evidence required**: What `$ship` must append to `RESULTS.md`
-- **Out of scope**: Adjacent work the executor must avoid
-```
-
-Label an unverified path or symbol as a hypothesis; do not present guesses as facts. Put tasks in dependency order and keep post-implementation canonical documentation synchronization out of `$ship` tasks. Documentation may be an execution task only when documentation itself is the requested product.
-
-### 6. Apply the readiness gate
-
-Mark the plan `Ready` only when:
+Before sealing, confirm:
 
 - no blocking question remains;
-- important repository claims have inspected evidence;
-- every requirement has acceptance criteria;
-- every requirement maps to one or more tasks;
-- tasks identify relevant files and symbols;
-- dependencies and execution order are explicit;
+- repository claims are backed by inspected evidence;
+- every requirement has acceptance criteria and maps to at least one task;
+- dependencies are explicit and acyclic;
 - validation is concrete;
-- no task delegates major product or architecture judgment to `$ship`;
-- assumptions and risks are recorded in `CONTEXT.md`;
-- `SPEC.md` and `PLAN.md` agree.
+- no task delegates major judgment to `$ship`;
+- assumptions and risks are recorded;
+- all contract artifacts agree.
 
-End by naming the plan folder and giving the exact handoff command: `$ship implement this plan: docs/plans/<plan>`. Do not implement it.
+Run `seal`. It synchronizes task state, records the Git baseline and dirty-file set, computes the contract digest, validates the folder, and transitions it to `Ready`. Then run `validate` and report any warning.
 
-## Refine an existing plan
+End with the folder and exact handoff: `$ship implement this plan: docs/plans/<plan>`. Do not implement it.
 
-1. Read every existing plan artifact plus relevant repository changes.
-2. Add the new information and clarification trail to `CONTEXT.md`.
-3. Preserve prior decisions and mark superseded ones explicitly.
-4. Update `SPEC.md` and `PLAN.md` wherever the decision changes requirements, tasks, order, or validation.
-5. If implementation or a prior review exists, mark any affected review conclusion stale.
-6. Reapply the readiness gate.
+## Refine a plan
 
-Do not use refinement to fix implementation code.
+1. Read all plan artifacts and relevant repository changes.
+2. Run `validate` to expose existing drift or inconsistency.
+3. If the contract is sealed, run `revise` before editing it. This increments the revision, invalidates old execution evidence for completion, and returns the plan to Draft.
+4. Update `CONTEXT.md` with new evidence and preserve superseded decisions.
+5. Update `SPEC.md` and `PLAN.md` wherever requirements, tasks, order, or validation changed.
+6. Mark affected prior review conclusions stale in a new `REVIEW.md` note; do not alter old rounds.
+7. Reapply the readiness gate, run `seal`, and run `validate`.
+
+Do not fix implementation code during refinement.
 
 ## Review implementation
 
-Treat review as a fresh, independent check against `SPEC.md`, not as approval of `$ship`'s narrative.
+Treat review as a fresh check against the exact sealed revision, not approval of `$ship`'s narrative.
 
-1. Read `CONTEXT.md`, `SPEC.md`, `PLAN.md`, and `RESULTS.md`.
-2. Inspect the actual implementation changes and relevant surrounding code.
-3. Check every requirement and acceptance criterion.
-4. Verify task scope, regressions, edge cases, and claims in `RESULTS.md`.
-5. Rerun proportionate validation when feasible; record anything not run and why.
-6. Append a numbered review round to `REVIEW.md` without deleting prior rounds.
+1. Run `validate`; stop on a digest mismatch or malformed evidence.
+2. Read all plan artifacts.
+3. Inspect the actual implementation changes, the recorded Git baselines and dirty files, and relevant surrounding code.
+4. Check every requirement, acceptance criterion, task boundary, regression risk, and claim in `RESULTS.md`.
+5. Rerun proportionate validation when feasible and state anything not run.
+6. Append a numbered `REVIEW.md` round with the current revision, digest, implementation baseline, findings ordered by severity, acceptance results, validation, risks, and one status.
 
-Each review round must include:
+Use these outcomes:
 
-- reviewed scope and implementation baseline;
-- findings ordered by severity with file and location evidence;
-- acceptance-criterion results;
-- validation performed;
-- remaining risks;
-- one status: `Changes required`, `Blocked`, or `Ready for user confirmation`.
+- `Changes required`: transition to `ChangesRequired`, then run `revise`, add bounded corrective tasks to the new contract, and reseal it. Do not fix them.
+- `Blocked`: transition to `Blocked` and record the missing evidence or decision. Refine later before resuming.
+- `Ready for user confirmation`: transition to `ReadyForConfirmation`. Do not finalize or update canonical docs.
 
-When issues remain, add or reopen bounded corrective tasks in `PLAN.md`. Do not fix them. When all checks pass, use `Ready for user confirmation`; do not mark the work finalized and do not update canonical project docs.
+A review round describes only what was actually checked. Never write post-implementation canonical updates during review.
 
 ## Finalize after explicit confirmation
 
-Run finalization only when the user explicitly invokes it or unmistakably authorizes finalization after a passing review. A passing review alone is not authorization.
+Run finalization only after the user explicitly invokes it or unmistakably authorizes it. Verify that:
 
-Before finalizing, verify that:
-
-- the latest review says `Ready for user confirmation`;
-- the implementation has not materially changed since that review;
-- no planned or corrective task remains pending or blocked;
-- validation evidence is still current;
+- `validate` passes and the latest current-revision review is `Ready for user confirmation`;
+- implementation has not materially changed since that review;
+- no task is pending, blocked, or failed;
+- validation remains current;
 - the user explicitly confirmed the result.
 
-Then perform every applicable post-implementation documentation update required by the repository's `AGENTS.md`, such as:
+Then perform applicable post-implementation documentation updates required by repository instructions, such as `docs/tasks.md`, `docs/devlog.md`, and affected setup, testing, API, UI, architecture, or codebase-map docs. Create only useful required docs and never modify source code.
 
-- completing tracked entries in `docs/tasks.md` without deleting history;
-- adding the completed work and validation to `docs/devlog.md`;
-- updating `docs/testing.md`, `docs/setup.md`, `docs/api.md`, `docs/ui.md`, `docs/architecture.md`, or `docs/codebase-map.md` when the accepted change affects them.
-
-Create only documentation that is useful and required by applicable repository rules. Do not modify source code during finalization. Finally, append the user's confirmation and documentation updates to `REVIEW.md`, mark the plan `Finalized`, and report the updated files.
+Append the confirmation and exact documentation updates to `REVIEW.md`, transition to `Finalized`, run `validate`, and report the updated files.

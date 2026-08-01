@@ -1,7 +1,7 @@
 interface:
   display_name: "Ship"
-  short_description: "Implement a complete plan with discipline"
-  default_prompt: "Use $ship to implement this complete plan, validate it, and record evidence: docs/plans/plan-name."
+  short_description: "Implement one complete sealed plan"
+  default_prompt: "Use $ship to implement or resume this complete sealed plan, validate it, and record revision-pinned evidence: docs/plans/plan-name."
 
 policy:
   allow_implicit_invocation: false
