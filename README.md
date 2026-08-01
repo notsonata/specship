@@ -34,7 +34,7 @@ $spec review
 | Skill | Recommended model | Responsibilities | Must not do |
 | --- | --- | --- | --- |
 | `$spec` | Higher-intelligence model | Investigate, grill ambiguity, write specifications and plans, review implementation, finalize confirmed work | Implement source changes, silently assume material requirements, finalize without user confirmation |
-| `$ship` | Faster workhorse model | Implement every task in one ready plan, run task-level and plan-wide validation, append execution evidence | Invent requirements, broaden scope, perform review, update canonical post-implementation docs |
+| `$ship` | Faster, cheaper workhorse model | Implement every task in one ready plan, run task-level and plan-wide validation, append execution evidence | Invent requirements, broaden scope, perform review, update canonical post-implementation docs |
 
 ## Plan artifacts
 
@@ -121,7 +121,7 @@ Only finalization updates applicable project records such as `docs/tasks.md`, `d
 Clone the private repository using your authenticated GitHub account:
 
 ```bash
-git clone git@github.com:notsonata/specship.git
+git clone https://github.com/notsonata/specship.git
 cd specship
 npx skills add . --skill spec --skill ship --agent codex --global --yes
 ```
@@ -148,8 +148,6 @@ cd /path/to/specship
 git pull
 npx skills add . --skill spec --skill ship --agent codex --global --yes
 ```
-
-No custom install script is currently needed; `npx skills` already handles agent targeting and global or project scope across operating systems.
 
 ## Repository layout
 
