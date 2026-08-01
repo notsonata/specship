@@ -3,7 +3,7 @@
 Specship separates high-judgment planning from bounded implementation by giving each role its own Codex skill:
 
 - **`$spec`** uses a stronger model to investigate, clarify, specify, review, and explicitly finalize work.
-- **`$ship`** uses a faster workhorse model to execute one planned task, validate it, and record evidence.
+- **`$ship`** uses a faster workhorse model to implement the complete plan, validate it, and record evidence.
 
 The two skills communicate through durable Markdown artifacts under `docs/plans/`, so they can run in separate conversations without sharing chat history.
 
@@ -32,7 +32,7 @@ flowchart LR
 | Skill | Recommended model | Responsibilities | Must not do |
 | --- | --- | --- | --- |
 | `$spec` | Higher-intelligence model | Investigate, grill ambiguity, write specifications and plans, review implementation, finalize confirmed work | Implement source changes, silently assume material requirements, finalize without user confirmation |
-| `$ship` | Faster workhorse model | Execute one ready task, run validation, update task status, append execution evidence | Invent requirements, broaden scope, perform review, update canonical post-implementation docs |
+| `$ship` | Faster workhorse model | Implement every task in one ready plan, run task-level and plan-wide validation, append execution evidence | Invent requirements, broaden scope, perform review, update canonical post-implementation docs |
 
 ## Plan artifacts
 
@@ -69,17 +69,17 @@ To incorporate new information:
 $spec refine docs/plans/organization-switching
 ```
 
-### 2. Execute one task with the workhorse
+### 2. Implement the complete plan with the workhorse
 
 Open a separate conversation using the workhorse model:
 
 ```text
-$ship docs/plans/organization-switching TASK-001
+$ship implement this plan: docs/plans/organization-switching
 ```
 
-`$ship` executes exactly one task by default, runs its validation, updates plan-local status, appends evidence to `RESULTS.md`, and stops.
+`$ship` executes every pending or reopened task in dependency order, runs task-level and plan-wide validation, updates plan-local status, appends evidence to `RESULTS.md`, and stops after the full plan is implemented.
 
-If the task exposes a material ambiguity, `$ship` records the blocker instead of guessing. Return to the strong-model conversation and run `$spec refine` before retrying the task.
+If any task exposes a material ambiguity, `$ship` stops the plan and records the blocker instead of guessing. Return to the strong-model conversation and run `$spec refine` before retrying the plan.
 
 ### 3. Review with the strong model
 

@@ -1,7 +1,7 @@
 interface:
   display_name: "Ship"
-  short_description: "Execute one planned task with discipline"
-  default_prompt: "Use $ship with a docs/plans folder to execute one bounded task, validate it, and record evidence."
+  short_description: "Implement a complete plan with discipline"
+  default_prompt: "Use $ship to implement this complete plan, validate it, and record evidence: docs/plans/plan-name."
 
 policy:
   allow_implicit_invocation: false

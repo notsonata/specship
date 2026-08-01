@@ -145,7 +145,7 @@ Mark the plan `Ready` only when:
 - assumptions and risks are recorded in `CONTEXT.md`;
 - `SPEC.md` and `PLAN.md` agree.
 
-End by naming the plan folder and the first runnable task. Do not implement it.
+End by naming the plan folder and giving the exact handoff command: `$ship implement this plan: docs/plans/<plan>`. Do not implement it.
 
 ## Refine an existing plan
 
