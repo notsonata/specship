@@ -1,6 +1,6 @@
 ---
 name: spec
-description: Investigate repository changes, resolve ambiguity with evidence-driven questions, and create self-contained specifications and implementation plans in named docs/plans folders for another model to execute. Use when the user invokes /spec or asks a strong planning model to plan, refine, review, or explicitly finalize implementation work without writing implementation code.
+description: Investigate repository changes, resolve ambiguity with evidence-driven questions, and create self-contained specifications and implementation plans in named docs/plans folders for another model to execute. Use when the user invokes $spec or asks a strong planning model to plan, refine, review, or explicitly finalize implementation work without writing implementation code.
 ---
 
 # Spec
@@ -13,10 +13,10 @@ Keep the plan folder as the durable handoff between conversations. Do not rely o
 
 Interpret the invocation as one of these operations:
 
-- `/spec <request>`: create a new plan.
-- `/spec refine docs/plans/<plan> [new information]`: resolve questions or revise an existing plan.
-- `/spec review docs/plans/<plan>`: inspect completed work and write a review without finalizing it.
-- `/spec finalize docs/plans/<plan>`: after explicit user confirmation, perform post-implementation documentation updates and close the plan.
+- `$spec <request>`: create a new plan.
+- `$spec refine docs/plans/<plan> [new information]`: resolve questions or revise an existing plan.
+- `$spec review docs/plans/<plan>`: inspect completed work and write a review without finalizing it.
+- `$spec finalize docs/plans/<plan>`: after explicit user confirmation, perform post-implementation documentation updates and close the plan.
 
 If the operation or plan folder is ambiguous, ask before writing to an existing plan. Never silently replace an existing plan folder.
 
@@ -36,8 +36,8 @@ Store each plan at `docs/plans/<plain-kebab-case-slug>/`:
 CONTEXT.md  # request, evidence, questions, answers, decisions, assumptions, history
 SPEC.md     # behavior contract
 PLAN.md     # ordered execution contract
-RESULTS.md  # executor evidence; created and appended by /ship
-REVIEW.md   # review rounds and finalization record; created by /spec review
+RESULTS.md  # executor evidence; created and appended by $ship
+REVIEW.md   # review rounds and finalization record; created by $spec review
 ```
 
 Use a short descriptive slug without a date. If the derived slug already exists, refine it only when the user intends to continue that plan; otherwise choose a distinct slug or ask.
@@ -124,11 +124,11 @@ Use this task shape:
 - **Preserve**: Existing behavior that must not change
 - **Validation**: Exact commands and meaningful manual checks
 - **Acceptance criteria**: Conditions required to mark the task done
-- **Evidence required**: What `/ship` must append to `RESULTS.md`
+- **Evidence required**: What `$ship` must append to `RESULTS.md`
 - **Out of scope**: Adjacent work the executor must avoid
 ```
 
-Label an unverified path or symbol as a hypothesis; do not present guesses as facts. Put tasks in dependency order and keep post-implementation canonical documentation synchronization out of `/ship` tasks. Documentation may be an execution task only when documentation itself is the requested product.
+Label an unverified path or symbol as a hypothesis; do not present guesses as facts. Put tasks in dependency order and keep post-implementation canonical documentation synchronization out of `$ship` tasks. Documentation may be an execution task only when documentation itself is the requested product.
 
 ### 6. Apply the readiness gate
 
@@ -141,7 +141,7 @@ Mark the plan `Ready` only when:
 - tasks identify relevant files and symbols;
 - dependencies and execution order are explicit;
 - validation is concrete;
-- no task delegates major product or architecture judgment to `/ship`;
+- no task delegates major product or architecture judgment to `$ship`;
 - assumptions and risks are recorded in `CONTEXT.md`;
 - `SPEC.md` and `PLAN.md` agree.
 
@@ -160,7 +160,7 @@ Do not use refinement to fix implementation code.
 
 ## Review implementation
 
-Treat review as a fresh, independent check against `SPEC.md`, not as approval of `/ship`'s narrative.
+Treat review as a fresh, independent check against `SPEC.md`, not as approval of `$ship`'s narrative.
 
 1. Read `CONTEXT.md`, `SPEC.md`, `PLAN.md`, and `RESULTS.md`.
 2. Inspect the actual implementation changes and relevant surrounding code.

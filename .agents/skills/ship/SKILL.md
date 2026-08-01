@@ -1,11 +1,11 @@
 ---
 name: ship
-description: Execute exactly one bounded implementation task from a named /spec plan folder under docs/plans, validate the change, and record plan-local evidence without inventing requirements or performing final project documentation updates. Use when the user invokes /ship with a plan folder and optional task ID for workhorse-model execution.
+description: Execute exactly one bounded implementation task from a named $spec plan folder under docs/plans, validate the change, and record plan-local evidence without inventing requirements or performing final project documentation updates. Use when the user invokes $ship with a plan folder and optional task ID for workhorse-model execution.
 ---
 
 # Ship
 
-Act as the workhorse implementer. Execute one ready task from an existing `/spec` plan, verify it, record evidence, and stop.
+Act as the workhorse implementer. Execute one ready task from an existing `$spec` plan, verify it, record evidence, and stop.
 
 Treat the plan folder as the source of truth. Do not depend on context from the planner's conversation.
 
@@ -13,8 +13,8 @@ Treat the plan folder as the source of truth. Do not depend on context from the 
 
 Accept these forms:
 
-- `/ship docs/plans/<plan>`: execute the first runnable pending task.
-- `/ship docs/plans/<plan> TASK-002`: execute the named task.
+- `$ship docs/plans/<plan>`: execute the first runnable pending task.
+- `$ship docs/plans/<plan> TASK-002`: execute the named task.
 
 Require an explicit plan folder. Never guess from the newest folder. If the path or requested task is ambiguous, stop and ask for the exact target.
 
@@ -27,7 +27,7 @@ Require an explicit plan folder. Never guess from the newest folder. If the path
 - Do not perform post-implementation project documentation synchronization.
 - Do not update `docs/devlog.md`, `docs/tasks.md`, or other canonical docs merely to record completed work.
 - Allow documentation edits only when documentation itself is an explicit implementation deliverable in the selected task.
-- Do not invoke `/spec` behavior inside this role.
+- Do not invoke `$spec` behavior inside this role.
 
 ## Read the execution contract
 
@@ -50,7 +50,7 @@ When blocked:
 1. Add a new unresolved question to `CONTEXT.md` with the repository evidence and why it matters.
 2. Mark the selected task `Blocked` in `PLAN.md`.
 3. Append a blocked attempt to `RESULTS.md`.
-4. Tell the user to run `/spec refine docs/plans/<plan>` in the strong-model conversation.
+4. Tell the user to run `$spec refine docs/plans/<plan>` in the strong-model conversation.
 
 Resolve small operational details from explicit repository conventions when they do not change the contract. Record any meaningful operational assumption in `RESULTS.md`.
 
@@ -79,7 +79,7 @@ Append one attempt record to `RESULTS.md`; never erase earlier attempts. Include
 - **Validation**: Commands or checks and their results
 - **Deviations**: None, or explicit differences from the plan
 - **Remaining risks**: Known limits or unverified behavior
-- **Review notes**: Anything `/spec review` should inspect closely
+- **Review notes**: Anything `$spec review` should inspect closely
 ```
 
 Do not claim a command passed unless it ran successfully. Record skipped or unavailable validation with the exact reason.
@@ -96,4 +96,4 @@ End the invocation with:
 - the plan-local records updated;
 - the next required action.
 
-Stop after the selected task. Do not start the next task, review the work as `/spec`, finalize the plan, or update canonical post-implementation documentation.
+Stop after the selected task. Do not start the next task, review the work as `$spec`, finalize the plan, or update canonical post-implementation documentation.
