@@ -1,0 +1,7 @@
+interface:
+  display_name: "Ship"
+  short_description: "Execute one planned task with discipline"
+  default_prompt: "Use $ship with a docs/plans folder to execute one bounded task, validate it, and record evidence."
+
+policy:
+  allow_implicit_invocation: false

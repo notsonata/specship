@@ -1,0 +1,7 @@
+interface:
+  display_name: "Spec"
+  short_description: "Create rigorous implementation-ready plans"
+  default_prompt: "Use $spec to create, refine, review, or explicitly finalize a repository plan without implementing it."
+
+policy:
+  allow_implicit_invocation: false
