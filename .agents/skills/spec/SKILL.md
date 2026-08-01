@@ -76,6 +76,8 @@ For each task, include only the fields that help execution:
 
 Use stable task IDs, requirement IDs, dependency tables, or migration and rollback sections only when the plan is complex enough to benefit from them. Label unverified paths or symbols as hypotheses.
 
+Specify validation from narrow to broad. Require a full repository suite only for cross-cutting or high-risk changes, when repository instructions require it, or when the user explicitly requests it. Test count is not a planning target.
+
 Keep the complete plan small enough for one workhorse conversation to execute. Split genuinely large programs into separate, independently useful plan folders.
 
 ### Check readiness
@@ -98,7 +100,8 @@ End with the folder and exact handoff: `$ship implement this plan: docs/plans/<p
 2. Investigate the new information before editing.
 3. Update every affected part of `PLAN.md` so it remains internally consistent and self-contained.
 4. Preserve useful history through Git rather than embedding a revision ledger in the plan.
-5. If execution has already begun, explicitly report that prior result entries may be stale and that `$ship` must reconcile them with the repository before resuming.
+5. When corrective work comes from review findings, reference the applicable finding IDs in each affected task, such as `Addresses R2-F1 and R2-F3`.
+6. If execution has already begun, explicitly report that prior result entries may be stale and that `$ship` must reconcile them with the repository before resuming.
 
 Do not edit implementation files or rewrite execution history.
 
@@ -106,13 +109,68 @@ Do not edit implementation files or rewrite execution history.
 
 Treat review as a fresh check of the actual repository, not approval of `$ship`'s narrative.
 
-1. Read `PLAN.md` and `RESULTS.md` when present.
+1. Read `PLAN.md`, `RESULTS.md` when present, and the complete existing `REVIEW.md` when present.
 2. Inspect the implementation changes and relevant surrounding code.
-3. Check every task, acceptance criterion, preserved behavior, regression risk, and claim in `RESULTS.md`.
-4. Rerun proportionate validation when feasible and state anything not run.
-5. Report findings ordered by severity with file and location evidence.
-6. Create or append `REVIEW.md` only when a durable review record is useful or the user requests one.
+3. Recheck every unresolved finding from prior review rounds before searching for new issues.
+4. Check every task, acceptance criterion, preserved behavior, regression risk, and claim in `RESULTS.md`.
+5. Rerun proportionate validation when feasible and state anything not run.
+6. Report findings ordered by severity with file and location evidence.
+7. Create `REVIEW.md` only when a durable review record is useful or the user requests one. If it already exists, reconcile prior findings and append the current round.
 
-Use one outcome: `Changes required`, `Blocked`, or `Pass`. When changes are required, describe bounded corrective work but do not implement it. Let the user request a plan update or implementation follow-up explicitly.
+### Resolve prior review findings
+
+Give each durable, actionable finding a stable identifier based on its review round, such as `R1-F1`, `R1-F2`, and `R2-F1`. Do not assign IDs to observations or optional suggestions.
+
+During a re-review:
+
+- Mark a prior finding `Resolved` when the implementation now satisfies it.
+- Keep it `Open` when the issue remains.
+- Mark it `Superseded` only when later plan or implementation changes make it inapplicable, and include evidence.
+- Include concise repository evidence for every resolution decision.
+- Do not delete or rewrite the original finding description, required correction, or review outcome.
+
+When every finding from a prior round is resolved or superseded and any review blocker is gone, change that round's status from `Open` to `Resolved` and record the later review that resolved it. A prior round may be resolved even when the current review discovers new issues.
+
+Use this shape:
+
+```markdown
+## Review 1
+
+- **Status**: Open | Resolved
+- **Outcome**: Changes required | Blocked | Pass
+- **Resolved in**: Review 2 | This review | Not yet resolved
+
+### Findings
+
+#### R1-F1: Descriptive finding
+
+- **Severity**: Critical | High | Medium | Low
+- **Finding status**: Open | Resolved | Superseded
+- **Evidence**: `path/to/file:location`
+- **Required correction**: ...
+- **Resolution evidence**: Pending | Verified in Review 2 at `path/to/file:location`
+```
+
+### Append the current review round
+
+After reconciling prior findings, append a new numbered review round containing:
+
+- its current status and outcome;
+- prior findings checked and their resolution results;
+- newly discovered findings;
+- acceptance-criteria results;
+- validation performed;
+- validation not performed and why;
+- remaining risks.
+
+Use `Open` for a current round with unresolved findings or a review blocker. Use `Resolved` for a passing round with no findings requiring correction.
+
+Use one current outcome:
+
+- `Changes required`: one or more findings require implementation changes.
+- `Blocked`: required evidence, access, or a material decision is missing.
+- `Pass`: all prior findings are resolved or superseded, no findings requiring correction remain, and the checked acceptance criteria pass.
+
+When changes are required, describe bounded corrective work but do not implement it. Let the user explicitly request `$spec update` or another `$ship` execution.
 
 Do not finalize work or update canonical project documentation as a separate Specship operation. The target repository's instructions govern documentation updates during normal implementation.

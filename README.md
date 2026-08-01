@@ -1,6 +1,6 @@
 # Specship
 
-Specship v0.3 is a lightweight two-model workflow for Codex:
+Specship v0.5 is a lightweight two-model workflow for Codex:
 
 - **`$spec`** uses a stronger model to investigate a repository and write a reliable implementation plan.
 - **`$ship`** uses a faster workhorse model to implement the complete plan, validate it, and record the result.
@@ -67,6 +67,8 @@ $ship implement this plan: docs/plans/organization-switching
 
 Normal repository activity is not automatically a blocker. `$ship` preserves unrelated changes and stops only when drift conflicts with the plan or invalidates a material assumption.
 
+Validation proceeds from the smallest relevant reproduction and targeted test toward broader checks only when justified. Full-suite runs are reserved for plans, repository rules, explicit requests, and changes with meaningful cross-cutting risk.
+
 ### 3. Review when useful
 
 Return to a strong-model conversation:
@@ -75,17 +77,76 @@ Return to a strong-model conversation:
 $spec review docs/plans/organization-switching
 ```
 
-Review inspects the actual implementation against `PLAN.md`, reruns proportionate validation, and reports findings. It creates or appends `REVIEW.md` only when a durable review record is useful or requested.
+Review inspects the actual implementation against `PLAN.md`, reruns proportionate validation, and reports findings. Durable findings receive identifiers such as `R1-F1`; later reviews record whether each finding remains open, is resolved, or was superseded without rewriting its original description. A prior review can be resolved even when the current review discovers a different issue.
 
-### Updating a plan
+Review has three outcomes:
 
-Use ordinary Git-backed editing instead of a formal revision lifecycle:
+- **Pass**: the checked acceptance criteria pass and no finding requiring correction remains. The workflow is complete.
+- **Changes required**: one or more bounded implementation defects remain.
+- **Blocked**: required evidence, access, or a material decision is missing.
+
+There is no separate finalization step.
+
+### 4. Correct and repeat when needed
+
+If review finds a straightforward implementation mistake already covered clearly by `PLAN.md`, run `$ship` again with the same folder. It verifies the repository rather than trusting the earlier completion record and implements the remaining work.
+
+If the correction changes or clarifies the plan, update it first:
+
+```text
+$spec update docs/plans/organization-switching to address R2-F1 and R2-F3
+```
+
+Then return to the workhorse:
+
+```text
+$ship implement this plan: docs/plans/organization-switching
+```
+
+After correction, run `$spec review` again. The new review reconciles every earlier open finding before searching for new issues. It may resolve an earlier round while opening a different finding in the current round.
+
+| `$spec review` result | Is the existing plan sufficient? | Next action |
+| --- | --- | --- |
+| `Pass` | Yes | Done |
+| `Changes required` | Yes | `$ship` implements the corrections, then `$spec review` checks again |
+| `Changes required` | No | `$spec update` revises the plan, `$ship` implements it, then `$spec review` checks again |
+| `Blocked` | Not yet known | Resolve the missing evidence, access, or decision; update the plan when affected, then continue |
+
+```text
+$spec plan
+    ↓
+$ship implement
+    ↓
+$spec review
+    ├── Pass → Done
+    └── Changes required
+            ↓
+       Is the existing plan sufficient?
+            ├── Yes → $ship implements corrections
+            └── No  → $spec update → $ship implements
+                              ↓
+                         $spec review again
+```
+
+## What `$spec update` does
+
+`$spec update` revises `PLAN.md` when the current handoff is no longer sufficient or accurate. Use it when:
+
+- the user changes or adds a requirement;
+- `$ship` encounters a material decision it cannot safely make;
+- repository changes invalidate a plan assumption;
+- review findings require clarified or additional corrective tasks; or
+- the original plan is incomplete or internally inconsistent.
+
+Example:
 
 ```text
 $spec update docs/plans/organization-switching with this new requirement
 ```
 
-If implementation has already begun, `$spec` reports that earlier result entries may be stale and `$ship` reconciles them with the repository when it resumes.
+`$spec` reads the plan, execution evidence, review history, and relevant repository changes, then rewrites every affected part of `PLAN.md` so it remains self-contained. Corrective tasks reference the applicable review finding IDs, such as `Addresses R2-F1 and R2-F3`.
+
+`$spec update` does not implement code, erase `RESULTS.md`, rewrite original review findings, or create a formal revision lifecycle. Git preserves the previous plan. If implementation has already begun, `$spec` reports that earlier result entries may be stale and `$ship` reconciles them with the repository when it resumes.
 
 ## Responsibilities
 
