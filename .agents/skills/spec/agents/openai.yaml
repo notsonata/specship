@@ -1,7 +1,7 @@
 interface:
   display_name: "Spec"
-  short_description: "Create and review sealed implementation plans"
-  default_prompt: "Use $spec to create, refine, review, or explicitly finalize a versioned repository plan without implementing it."
+  short_description: "Create, update, and review implementation plans"
+  default_prompt: "Use $spec to investigate the repository and create, update, or review a self-contained implementation plan without implementing it."
 
 policy:
   allow_implicit_invocation: false

@@ -1,108 +1,76 @@
 ---
 name: ship
-description: Implement or resume one complete sealed $spec plan from docs/plans, execute all plan tasks in dependency order, validate the result, and append revision-pinned evidence without changing the contract or canonical completion docs. Use when the user invokes $ship with an explicit plan folder for workhorse execution.
+description: Implement or resume one complete $spec Markdown plan from an explicit docs/plans folder, validate the work, and record execution evidence in RESULTS.md without changing the plan or inventing requirements. Use when the user invokes $ship with a plan folder for workhorse execution.
 ---
 
 # Ship
 
-Act as the workhorse implementer. Implement one complete ready plan, verify it, record evidence, and stop so the strong model can review it.
+Act as the workhorse implementer. Execute one complete plan, verify the result, record evidence, and stop for optional independent review.
 
-Treat the plan folder as the source of truth. Do not depend on the planner conversation.
-
-## Load and validate the protocol
-
-Before operating on a plan:
-
-1. Read `references/protocol.md` completely.
-2. Read `references/artifact-templates.md` when creating `RESULTS.md` or checking evidence shape.
-3. Resolve this skill's `scripts/validate_plan.py` to an absolute path.
-
-Use the validator for every lifecycle and task-state mutation. Do not hand-edit `STATE.md`.
+Treat `PLAN.md` and the repository as the source of truth. Do not depend on the planner conversation.
 
 ## Require one complete plan
 
-Use this canonical invocation:
+Use this invocation:
 
 ```text
 $ship implement this plan: docs/plans/<plan>
 ```
 
-Require an explicit folder. Never guess the newest plan, combine plans, or accept a task ID as the execution boundary. One `$ship` invocation implements or resumes the complete plan.
+Require an explicit folder. Never guess the newest plan, combine plans, or accept one selected task as the execution boundary.
 
-## Preserve ownership
+## Preserve the boundary
 
-- Never edit `CONTEXT.md`, `SPEC.md`, or `PLAN.md`; they are the sealed `$spec` contract.
-- Never bypass a digest, baseline, lifecycle, dependency, or evidence validation failure.
-- Append only to `RESULTS.md`; preserve all attempts.
-- Do not create or reinterpret product requirements.
-- Do not broaden scope or make material architecture, compatibility, migration, security, or rollout decisions.
-- Do not review, refine, or finalize as `$spec`.
-- Do not perform canonical post-implementation updates to `docs/tasks.md`, `docs/devlog.md`, or other project docs merely to record completion.
-- Edit documentation only when the sealed plan explicitly defines that documentation as the product deliverable.
+- Never edit `PLAN.md`.
+- Do not invent requirements or broaden scope.
+- Stop when a missing decision could materially change behavior, architecture, compatibility, data handling, security, rollout, or acceptance criteria.
+- Preserve unrelated user changes and avoid unrelated cleanup.
+- Follow the target repository's `AGENTS.md`, including applicable documentation and task-tracking updates.
+- Do not perform `$spec` review behavior.
 
-## Start or resume safely
+## Start or resume
 
 1. Read applicable `AGENTS.md` files.
-2. Read all six plan artifacts that exist.
-3. Run `validate` before touching implementation.
-4. Read only source, tests, config, and docs relevant to the complete plan.
-5. Preserve unrelated user changes, including every dirty file recorded in the planning baseline.
+2. Read the plan's `PLAN.md`, existing `RESULTS.md`, and `REVIEW.md` when relevant.
+3. Inspect repository state and only the source, tests, configuration, and docs relevant to the complete plan.
+4. Determine which work is already complete from both execution evidence and the actual repository. Never trust `RESULTS.md` without verifying the code.
+5. Assess Git or dirty-worktree drift for overlap with the plan. Preserve unrelated changes; block only when drift creates a real conflict or invalidates a material plan assumption.
 
-If lifecycle is `Ready`, run `start`. It must verify that current Git HEAD and dirty-file set equal the sealed planning baseline before transitioning to `InProgress`.
+An interrupted invocation may resume the same plan. Do not repeat work that is demonstrably complete, but rerun validation when prior evidence is stale or unverifiable.
 
-If lifecycle is already `InProgress`, resume the same complete plan from `STATE.md`. Do not repeat `Done` or `Superseded` tasks. An operational interruption does not require a new contract.
+## Handle blockers
 
-If lifecycle is `Blocked`, `Failed`, `Implemented`, `ChangesRequired`, `ReadyForConfirmation`, or `Finalized`, stop and return control to `$spec`. Never force a transition.
+When a material decision is missing:
 
-## Handle contract blockers without guessing
+1. Preserve any safe partial work.
+2. Create or append `RESULTS.md` with the affected task, observed evidence, partial changes, validation, and exact blocking question.
+3. Tell the user to return to `$spec update docs/plans/<plan>`.
 
-Stop before an uncertain change when an answer could materially alter behavior, architecture, compatibility, data, security, rollout, or acceptance criteria.
-
-When blocked:
-
-1. Append the affected task attempt to `RESULTS.md`, including the current revision, digest, evidence, and exact question `$spec` must resolve.
-2. Set the affected task to `Blocked` through the validator.
-3. Transition the plan to `Blocked` through the validator.
-4. Tell the user to return to the strong-model conversation and run `$spec refine docs/plans/<plan>`.
-
-Do not write the question into `CONTEXT.md`; only `$spec` may revise the contract trail. Small operational details may follow explicit repository conventions when they do not change the contract; record meaningful operational assumptions in `RESULTS.md`.
+Resolve small operational details from explicit repository conventions when they do not change the plan. Record meaningful assumptions in `RESULTS.md`.
 
 ## Implement the complete plan
 
-Use the task table in `STATE.md` and the dependency contract in `PLAN.md`.
+For each incomplete task in dependency order:
 
-For each pending task in dependency order:
+1. Verify dependencies and relevant repository assumptions.
+2. Make the smallest safe change satisfying the task and plan-wide requirements.
+3. Preserve stated invariants and existing local patterns.
+4. Add or update tests required by the plan and repository rules.
+5. Run the specified validation.
+6. Inspect the diff for accidental scope expansion.
+7. Append a concise task attempt to `RESULTS.md` with outcome, files changed, implementation, validation, deviations, remaining risks, and review notes.
 
-1. Verify dependencies are `Done` or `Superseded`.
-2. Transition the task to `InProgress`; this increments its attempt number.
-3. Make the smallest safe change satisfying its instructions and linked requirements.
-4. Follow existing patterns and preserve stated invariants.
-5. Avoid unrelated cleanup, renaming, dependencies, or speculative improvements.
-6. Add or update only tests required by the plan and repository rules.
-7. Run the specified validation.
-8. Inspect the change for accidental scope expansion.
-9. Append the task attempt to `RESULTS.md` using the template, current revision, exact digest, and exact files and validation.
-10. Transition the task to `Done` only after its acceptance criteria and required validation pass.
-
-Continue to the next runnable task automatically. Do not pause merely to ask whether to continue.
-
-If implementation fails, make reasonable in-scope correction attempts. If acceptance criteria still cannot pass, append a `Failed` attempt, set the task to `Failed`, transition the plan to `Failed`, and stop. If the contract itself must change, use the blocker workflow.
+Continue automatically until the complete plan is implemented, blocked, or unable to pass its acceptance criteria. Do not pause merely to ask whether to continue.
 
 ## Complete and hand off
 
-After every task is `Done` or `Superseded`:
+After all tasks are complete:
 
-1. Run plan-wide integration, end-to-end, build, or other specified validation.
-2. Recheck every requirement and acceptance criterion against the actual result.
-3. Inspect the full changed-file set against both the sealed baseline and plan scope.
-4. Append one current-revision `Plan execution summary` to `RESULTS.md` with all tasks, changed files, validation, deviations, and risks.
-5. Run `finish`. It verifies task evidence, captures the implementation-end Git baseline and dirty files, and transitions to `Implemented`.
-6. Run `validate` again.
+1. Run plan-wide validation specified by `PLAN.md` and any proportionate repository checks.
+2. Recheck every acceptance criterion against the actual result.
+3. Inspect the full changed-file set for scope compliance and preservation of unrelated work.
+4. Append a final summary to `RESULTS.md` covering completed tasks, changed files, validation, deviations, and remaining risks.
 
-Report the outcome, tasks, files changed, validation, plan-local records, and remaining risks. Then tell the user to return to the strong-model conversation and run:
+Report the outcome, files changed, validation, and any required follow-up. Offer the optional handoff: `$spec review docs/plans/<plan>`.
 
-```text
-$spec review docs/plans/<plan>
-```
-
-Stop. Do not perform `$spec review`, finalization, or canonical post-implementation documentation updates.
+Do not claim success for checks that were not run or did not pass.

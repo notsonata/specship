@@ -1,76 +1,51 @@
 # Specship
 
-Specship is a two-model workflow for Codex that separates high-judgment specification and review from full-plan implementation:
+Specship v0.3 is a lightweight two-model workflow for Codex:
 
-- **`$spec`** uses a stronger model to investigate, clarify material ambiguity, write a sealed implementation contract, review the result, and explicitly finalize confirmed work.
-- **`$ship`** uses a faster workhorse model to implement or resume the complete sealed plan, validate it, and record revision-pinned evidence.
+- **`$spec`** uses a stronger model to investigate a repository and write a reliable implementation plan.
+- **`$ship`** uses a faster workhorse model to implement the complete plan, validate it, and record the result.
 
-The skills communicate through durable Markdown artifacts under `docs/plans/`, so they can run in separate Codex conversations without shared chat history.
+The plan folder is the handoff, so the two skills can run in separate Codex conversations without shared chat history.
 
-> **Status: public source preview.** The repository is public so the workflow can be installed across devices and dogfooded in real projects. Specship is not considered publicly released, production-ready, or ready for a skills.sh or plugin submission yet.
->
-> **Built for Codex.** Specship is designed and validated around Codex skill discovery, `$skill` invocation, repository instructions, and shared-workspace behavior. Other Agent Skills-compatible tools are currently unverified.
+> **Status: public source preview.** Specship is being dogfooded and is not yet presented as production-ready or submitted to a skill registry.
 
 ## Why Specship?
 
-Planning and implementation reward different strengths. A strong model is most useful when resolving ambiguity, understanding architecture, defining observable success, and reviewing the result. Once that judgment becomes a precise contract, a faster model can execute the bounded work without rediscovering product intent.
+Planning and implementation reward different strengths. A strong model is most useful when resolving ambiguity, understanding architecture, selecting an approach, and defining observable success. Once that judgment is captured in a self-contained Markdown plan, a faster model can execute it without rediscovering product intent.
 
-Specship makes that division auditable:
+Specship deliberately keeps this contract small:
 
 ```text
 $spec plan
     |
     v
-Sealed, versioned plan contract
+Self-contained PLAN.md
     |
     v
-$ship implements the complete plan
+$ship implements the complete plan and writes RESULTS.md
     |
     v
-$spec review
-    |-- issues remain --> new contract revision --> $ship --> $spec review
-    `-- review passes --> user confirmation --> $spec finalize
+Optional $spec review and REVIEW.md
 ```
 
-`$spec` never implements, even for a tiny fix. `$ship` never executes only one selected task: it implements or resumes one complete plan and then stops for review.
+`$spec` never implements source changes. `$ship` never edits the plan, invents requirements, or executes only a selected task from it.
 
-## Responsibilities
-
-| Skill | Recommended model | Responsibilities | Must not do |
-| --- | --- | --- | --- |
-| `$spec` | Higher-intelligence model | Investigate, clarify material ambiguity, write and seal contracts, review implementation, finalize confirmed work | Implement source changes, hide material assumptions, edit execution history, finalize without confirmation |
-| `$ship` | Faster workhorse model | Implement every runnable task in one plan, run validation, append evidence, resume interrupted execution | Edit the contract, invent requirements, broaden scope, review, update canonical completion docs |
-
-## Plan contract
-
-Every request receives a plain-slug folder:
+## Plan folder
 
 ```text
 docs/plans/<plan>/
-|-- CONTEXT.md   # Request, evidence, questions, decisions, assumptions
-|-- SPEC.md      # Requirements, constraints, behavior, acceptance criteria
-|-- PLAN.md      # Ordered full-plan implementation tasks
-|-- STATE.md     # Lifecycle, revision, digest, baselines, task state
-|-- RESULTS.md   # Append-only execution evidence from $ship
-`-- REVIEW.md    # Append-only review and finalization evidence from $spec
+|-- PLAN.md       # request, evidence, scope, approach, tasks, and validation
+|-- RESULTS.md    # created by $ship; progress and execution evidence
+`-- REVIEW.md     # optional; created by $spec review when useful
 ```
 
-The ownership boundary is strict:
+`PLAN.md` is self-contained and remains unchanged while `$ship` executes it. Git preserves plan history; Specship does not maintain a separate revision ledger, digest, lifecycle, or repository fingerprint.
 
-| Artifact | Owner | Rule |
-| --- | --- | --- |
-| `CONTEXT.md`, `SPEC.md`, `PLAN.md` | `$spec` | Immutable after sealing; any change starts a new contract revision |
-| `STATE.md` | Bundled validator after bootstrap | `$spec` creates it from the template; later lifecycle and task state are validator-managed |
-| `RESULTS.md` | `$ship` | Append-only and pinned to the contract revision and digest |
-| `REVIEW.md` | `$spec` | Append-only and pinned to the reviewed revision and digest |
-
-Sealing records a SHA-256 digest of the three contract artifacts plus the Git HEAD, branch, unrelated dirty-file set, and dirty-content fingerprint. `$ship` refuses to start if the contract was edited or the repository baseline drifted. State mutations also revalidate the active contract. A new `$spec refine` revision invalidates old completion state rather than letting stale evidence satisfy a changed plan.
+`RESULTS.md` supports interrupted execution by recording completed work and validation. On resume, `$ship` verifies that evidence against the actual repository before deciding what remains.
 
 ## Workflow
 
-Use separate Codex conversations. The repository and plan folder are the handoff mechanism.
-
-### 1. Plan with the strong model
+### 1. Create a plan
 
 Open a conversation using the stronger model:
 
@@ -78,62 +53,48 @@ Open a conversation using the stronger model:
 $spec Add organization switching to the account settings flow.
 ```
 
-`$spec` investigates before asking questions. It asks only when ambiguity can materially change the contract; a precise request may need no questions. Blocking questions and their answers remain in `CONTEXT.md`.
+`$spec` reads repository instructions, investigates relevant code and tests, asks only genuinely blocking questions, and writes one executable `PLAN.md`.
 
-When ready, `$spec` seals the contract and gives the exact handoff command. To incorporate new information or repository drift:
+### 2. Implement the complete plan
 
-```text
-$spec refine docs/plans/organization-switching
-```
-
-### 2. Implement the complete plan with the workhorse
-
-Open a separate conversation using the workhorse model:
+Open a separate workhorse-model conversation:
 
 ```text
 $ship implement this plan: docs/plans/organization-switching
 ```
 
-`$ship` validates the digest and Git baseline, executes every pending task in dependency order, runs task-level and plan-wide validation, appends evidence to `RESULTS.md`, and stops after the complete plan is implemented.
+`$ship` reads the plan, reconciles any existing results with the repository, executes all incomplete tasks in dependency order, runs validation, and records evidence in `RESULTS.md`.
 
-If the conversation is interrupted while `STATE.md` is `InProgress`, the same command in a new workhorse conversation resumes the full plan without repeating completed tasks. If implementation exposes a material contract ambiguity, `$ship` records the blocker without editing the contract and returns control to `$spec refine`.
+Normal repository activity is not automatically a blocker. `$ship` preserves unrelated changes and stops only when drift conflicts with the plan or invalidates a material assumption.
 
-### 3. Review with the strong model
+### 3. Review when useful
 
-Return to the strong-model conversation:
+Return to a strong-model conversation:
 
 ```text
 $spec review docs/plans/organization-switching
 ```
 
-Review checks the actual changes against the exact sealed revision and appends a round to `REVIEW.md`.
+Review inspects the actual implementation against `PLAN.md`, reruns proportionate validation, and reports findings. It creates or appends `REVIEW.md` only when a durable review record is useful or requested.
 
-- When issues remain, `$spec` creates and seals a new revision with bounded corrective tasks. It does not fix them.
-- When checks pass, the plan becomes `ReadyForConfirmation`.
-- Review never writes post-implementation canonical project updates.
+### Updating a plan
 
-### 4. Finalize only after confirmation
-
-After personally confirming the result:
+Use ordinary Git-backed editing instead of a formal revision lifecycle:
 
 ```text
-$spec finalize docs/plans/organization-switching
+$spec update docs/plans/organization-switching with this new requirement
 ```
 
-Only finalization updates applicable project records such as `docs/tasks.md`, `docs/devlog.md`, and affected setup, testing, API, UI, architecture, or codebase-map documentation.
+If implementation has already begun, `$spec` reports that earlier result entries may be stale and `$ship` reconciles them with the repository when it resumes.
 
-## Lifecycle
+## Responsibilities
 
-```text
-Draft -> AwaitingClarification -> Ready -> InProgress
-                                      |-> Blocked -> new revision
-                                      |-> Failed  -> new revision
-                                      `-> Implemented
-                                            |-> ChangesRequired -> new revision
-                                            `-> ReadyForConfirmation -> Finalized
-```
+| Skill | Owns | Must not do |
+| --- | --- | --- |
+| `$spec` | Investigation, clarification, plan creation and updates, independent review | Implement source changes or rewrite execution evidence |
+| `$ship` | Complete-plan implementation, validation, resumable execution evidence | Edit `PLAN.md`, invent requirements, broaden scope, or review as `$spec` |
 
-Lifecycle and task transitions are performed by the bundled validator, not by prose edits.
+The target repository's `AGENTS.md` remains authoritative for implementation practices, testing, task tracking, and canonical documentation updates. Specship adds no separate finalization operation.
 
 ## Installation
 
@@ -145,17 +106,15 @@ Lifecycle and task transitions are performed by the bundled validator, not by pr
 
 ### Install globally for Codex
 
-Install both skills directly from the public repository for personal testing:
-
 ```bash
 npx skills add notsonata/specship --skill spec --skill ship --agent codex --global --yes
 ```
 
-Restart Codex if the skills do not appear. Type `$` and select `Spec` or `Ship`; these are dollar-invoked skills, not slash commands.
+Restart Codex if the skills do not appear. Type `$` and select **Spec** or **Ship**.
 
 ### Install into one project
 
-Omit `--global` while inside the target repository:
+Run inside the target repository without `--global`:
 
 ```bash
 npx skills add notsonata/specship --skill spec --skill ship --agent codex --yes
@@ -169,8 +128,6 @@ cd specship
 npx skills add . --skill spec --skill ship --agent codex --global --yes
 ```
 
-To update, pull the clone and run the same `npx skills add .` command again.
-
 ## Repository layout
 
 ```text
@@ -178,22 +135,16 @@ To update, pull the clone and run the same `npx skills add .` command again.
 |-- .agents/skills/
 |   |-- spec/
 |   |   |-- SKILL.md
-|   |   |-- agents/openai.yaml
-|   |   |-- references/
-|   |   `-- scripts/validate_plan.py
+|   |   `-- agents/openai.yaml
 |   `-- ship/
 |       |-- SKILL.md
-|       |-- agents/openai.yaml
-|       |-- references/
-|       `-- scripts/validate_plan.py
+|       `-- agents/openai.yaml
 `-- README.md
 ```
 
-Each skill contains its own validator and protocol references so it remains self-contained when installed.
-
 ## Development and validation
 
-Run before committing a skill change:
+Validate both skill packages before committing changes:
 
 ```bash
 python3 /path/to/skill-creator/scripts/quick_validate.py .agents/skills/spec
@@ -201,19 +152,4 @@ python3 /path/to/skill-creator/scripts/quick_validate.py .agents/skills/ship
 npx skills add . --list
 ```
 
-## Dogfooding gate
-
-The source can remain public while the workflow stays an unreleased preview. Do not submit it to skills.sh, package it as a plugin, or describe it as production-ready until it has passed repeated end-to-end use across real projects.
-
-At minimum, test:
-
-- a precise one-file fix that needs no clarification;
-- a multi-task feature and a migration with rollback concerns;
-- an execution blocker returned to `$spec refine`;
-- stale Git and dirty-worktree baselines;
-- interrupted full-plan execution resumed in a new conversation;
-- a failed review followed by corrective work;
-- a passing review where finalization is delayed or declined;
-- refinement after partial implementation.
-
-Before considering a public release, also choose a license, evaluate skill-name collisions, decide whether plugin packaging is useful, test supported Codex surfaces, and review every protocol guarantee during dogfooding.
+Dogfood the workflow on small fixes, multi-task features, blocked implementations, interrupted execution, plan updates after partial work, and passing and failing reviews. Add machinery only when repeated use demonstrates a concrete failure that instructions and repository evidence cannot handle reliably.
