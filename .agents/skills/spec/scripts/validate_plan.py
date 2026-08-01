@@ -24,6 +24,51 @@ READY_STATES = {
     "Finalized",
 }
 TASK_STATES = {"Pending", "InProgress", "Done", "Blocked", "Failed", "Superseded"}
+TASK_FIELDS = (
+    "Requirements",
+    "Objective",
+    "Rationale",
+    "Dependencies",
+    "Files and symbols",
+    "Implementation instructions",
+    "Preserve",
+    "Validation",
+    "Acceptance criteria",
+    "Evidence required",
+    "Out of scope",
+)
+ATTEMPT_FIELDS = (
+    "Contract revision",
+    "Contract digest",
+    "Outcome",
+    "Files changed",
+    "Implementation",
+    "Validation",
+    "Deviations",
+    "Remaining risks",
+    "Review notes",
+)
+SUMMARY_FIELDS = (
+    "Contract revision",
+    "Contract digest",
+    "Outcome",
+    "Tasks",
+    "Files changed",
+    "Plan-wide validation",
+    "Deviations",
+    "Remaining risks",
+)
+REVIEW_FIELDS = (
+    "Contract revision",
+    "Contract digest",
+    "Implementation baseline",
+    "Status",
+    "Reviewed scope",
+    "Findings",
+    "Acceptance criteria",
+    "Validation",
+    "Remaining risks",
+)
 TRANSITIONS = {
     "spec": {
         ("Draft", "AwaitingClarification"),
@@ -148,6 +193,20 @@ def section(text: str, start: re.Match, next_match: re.Match | None) -> str:
     return text[start.start() : next_match.start() if next_match else len(text)]
 
 
+def field_value(body: str, label: str) -> str | None:
+    match = re.search(rf"^-\s+\*\*{re.escape(label)}\*\*:\s*(.*)$", body, re.MULTILINE | re.IGNORECASE)
+    if not match:
+        return None
+    value = match.group(1).strip()
+    if not value or value.lower() in {"...", "tbd", "pending"} or (value.startswith("<") and value.endswith(">")):
+        return None
+    return value
+
+
+def has_fields(body: str, labels: tuple[str, ...]) -> bool:
+    return all(field_value(body, label) is not None for label in labels)
+
+
 def parse_requirements(plan_dir: Path) -> tuple[list[str], list[str]]:
     text = read_text(plan_dir / "SPEC.md")
     matches = list(REQ_RE.finditer(text))
@@ -157,8 +216,8 @@ def parse_requirements(plan_dir: Path) -> tuple[list[str], list[str]]:
         errors.append("SPEC.md: duplicate requirement IDs")
     for index, match in enumerate(matches):
         body = section(text, match, matches[index + 1] if index + 1 < len(matches) else None)
-        if not re.search(r"\*\*Acceptance criteria\*\*\s*:", body, re.IGNORECASE):
-            errors.append(f"SPEC.md: {match.group(1)} has no Acceptance criteria field")
+        if field_value(body, "Acceptance criteria") is None:
+            errors.append(f"SPEC.md: {match.group(1)} needs non-empty Acceptance criteria")
     if not ids:
         errors.append("SPEC.md: no REQ-NNN requirements found")
     return ids, errors
@@ -175,14 +234,13 @@ def parse_tasks(plan_dir: Path) -> tuple[dict[str, dict], list[str]]:
             errors.append(f"PLAN.md: duplicate task ID {task_id}")
             continue
         body = section(text, match, matches[index + 1] if index + 1 < len(matches) else None)
+        for label in TASK_FIELDS:
+            if field_value(body, label) is None:
+                errors.append(f"PLAN.md: {task_id} needs non-empty {label}")
         req_line = re.search(r"^-\s+\*\*Requirements\*\*:\s*(.+)$", body, re.MULTILINE)
         dep_line = re.search(r"^-\s+\*\*Dependencies\*\*:\s*(.+)$", body, re.MULTILINE)
         requirements = re.findall(r"REQ-\d{3,}", req_line.group(1)) if req_line else []
         dependencies = re.findall(r"TASK-\d{3,}", dep_line.group(1)) if dep_line else []
-        if not req_line:
-            errors.append(f"PLAN.md: {task_id} has no Requirements field")
-        if not dep_line:
-            errors.append(f"PLAN.md: {task_id} has no Dependencies field")
         tasks[task_id] = {"requirements": requirements, "dependencies": dependencies}
     if not tasks:
         errors.append("PLAN.md: no TASK-NNN tasks found")
@@ -237,23 +295,22 @@ def open_blocking_questions(plan_dir: Path) -> list[str]:
     return open_ids
 
 
-def evidence_for_task(plan_dir: Path, task_id: str, revision: int, digest: str) -> bool:
+def evidence_for_task(plan_dir: Path, task_id: str, revision: int, digest: str, attempt: int | None = None) -> bool:
     path = plan_dir / "RESULTS.md"
     if not path.exists():
         return False
     text = read_text(path)
     headings = list(re.finditer(r"^##\s+.+$", text, re.MULTILINE))
     for index, match in enumerate(headings):
-        if not re.match(rf"^##\s+{re.escape(task_id)}\s+—\s+Attempt\s+\d+\s*$", match.group(0)):
+        heading = re.match(rf"^##\s+{re.escape(task_id)}\s+—\s+Attempt\s+(\d+)\s*$", match.group(0))
+        if not heading or (attempt is not None and int(heading.group(1)) != attempt):
             continue
         body = section(text, match, headings[index + 1] if index + 1 < len(headings) else None)
-        if all(
-            value in body
-            for value in (
-                "- **Outcome**: Completed",
-                f"- **Contract revision**: {revision}",
-                f"- **Contract digest**: {digest}",
-            )
+        if (
+            has_fields(body, ATTEMPT_FIELDS)
+            and field_value(body, "Outcome") == "Completed"
+            and field_value(body, "Contract revision") == str(revision)
+            and field_value(body, "Contract digest") == digest
         ):
             return True
     return False
@@ -269,7 +326,12 @@ def has_current_summary(plan_dir: Path, revision: int, digest: str) -> bool:
         if match.group(0) != "## Plan execution summary":
             continue
         body = section(text, match, headings[index + 1] if index + 1 < len(headings) else None)
-        if all(value in body for value in (f"- **Contract revision**: {revision}", f"- **Contract digest**: {digest}")):
+        if (
+            has_fields(body, SUMMARY_FIELDS)
+            and field_value(body, "Contract revision") == str(revision)
+            and field_value(body, "Contract digest") == digest
+            and field_value(body, "Outcome") == "Implemented"
+        ):
             return True
     return False
 
@@ -283,10 +345,12 @@ def current_review_status(plan_dir: Path, revision: int, digest: str) -> str | N
     status = None
     for index, match in enumerate(headings):
         body = section(text, match, headings[index + 1] if index + 1 < len(headings) else None)
-        if all(value in body for value in (f"- **Contract revision**: {revision}", f"- **Contract digest**: {digest}")):
-            match_status = re.search(r"^-\s+\*\*Status\*\*:\s*(.+)$", body, re.MULTILINE)
-            if match_status:
-                status = match_status.group(1).strip()
+        if (
+            has_fields(body, REVIEW_FIELDS)
+            and field_value(body, "Contract revision") == str(revision)
+            and field_value(body, "Contract digest") == digest
+        ):
+            status = field_value(body, "Status")
     return status
 
 
@@ -304,14 +368,19 @@ def has_current_finalization(plan_dir: Path, revision: int, digest: str) -> bool
         if match.group(0) != "## Finalization":
             continue
         body = section(text, match, headings[index + 1] if index + 1 < len(headings) else None)
-        if all(
-            value in body
-            for value in (
-                f"- **Contract revision**: {revision}",
-                f"- **Contract digest**: {digest}",
-                "- **User confirmation**:",
-                "- **Canonical documentation updates**:",
+        if (
+            has_fields(
+                body,
+                (
+                    "Contract revision",
+                    "Contract digest",
+                    "User confirmation",
+                    "Canonical documentation updates",
+                    "Validation freshness",
+                ),
             )
+            and field_value(body, "Contract revision") == str(revision)
+            and field_value(body, "Contract digest") == digest
         ):
             return True
     return False
@@ -416,7 +485,7 @@ def validate(plan_dir: Path) -> tuple[list[str], list[str]]:
             if value["status"] not in TASK_STATES:
                 errors.append(f"STATE.md: {task_id} has unknown status {value['status']}")
             if value["status"] == "Done" and expected_digest != "UNSEALED":
-                if not evidence_for_task(plan_dir, task_id, state["contract_revision"], expected_digest):
+                if not evidence_for_task(plan_dir, task_id, state["contract_revision"], expected_digest, value["attempts"]):
                     errors.append(f"RESULTS.md: {task_id} is Done without current completed evidence")
 
         if lifecycle in READY_STATES:
@@ -435,7 +504,20 @@ def validate(plan_dir: Path) -> tuple[list[str], list[str]]:
 
     if state.get("planning_base_sha") == "UNAVAILABLE":
         warnings.append("Git planning baseline is unavailable")
+    elif state.get("planning_dirty_files"):
+        warnings.append("Plan baseline contains pre-existing dirty files; preserve and review them carefully")
     return list(dict.fromkeys(errors)), warnings
+
+
+def assert_valid_state(plan_dir: Path, allowed_states: set[str]) -> dict:
+    errors, _ = validate(plan_dir)
+    if errors:
+        raise ProtocolError("cannot mutate invalid plan:\n- " + "\n- ".join(errors))
+    state = read_metadata(plan_dir / "STATE.md")
+    if state.get("lifecycle_state") not in allowed_states:
+        expected = ", ".join(sorted(allowed_states))
+        raise ProtocolError(f"lifecycle must be one of: {expected}")
+    return state
 
 
 def transition(plan_dir: Path, new: str, actor: str, note: str, force: bool = False) -> None:
@@ -444,6 +526,8 @@ def transition(plan_dir: Path, new: str, actor: str, note: str, force: bool = Fa
     old = state["lifecycle_state"]
     if not force and (old, new) not in TRANSITIONS.get(actor, set()):
         raise ProtocolError(f"transition {old} -> {new} is not allowed for {actor}")
+    if not force and old in READY_STATES:
+        state = assert_valid_state(plan_dir, {old})
     if actor == "spec" and old == "Implemented":
         expected_status = {
             "ChangesRequired": "Changes required",
@@ -463,10 +547,8 @@ def transition(plan_dir: Path, new: str, actor: str, note: str, force: bool = Fa
 
 def command_revise(plan_dir: Path, note: str) -> None:
     state_path = plan_dir / "STATE.md"
-    state = read_metadata(state_path)
+    state = assert_valid_state(plan_dir, {"Ready", "Blocked", "Failed", "ChangesRequired"})
     old = state.get("lifecycle_state", "Draft")
-    if old == "Finalized":
-        raise ProtocolError("a finalized plan cannot be revised")
     revision = int(state.get("contract_revision", 0)) + 1
     for name in CONTRACT_FILES:
         path = plan_dir / name
@@ -531,6 +613,8 @@ def command_start(plan_dir: Path, note: str) -> None:
     if state.get("planning_base_sha") != "UNAVAILABLE":
         if current["sha"] != state.get("planning_base_sha"):
             raise ProtocolError("Git HEAD differs from the sealed planning baseline; return to $spec refine")
+        if current["branch"] != state.get("planning_branch"):
+            raise ProtocolError("Git branch differs from the sealed planning baseline; return to $spec refine")
         if current["dirty_files"] != state.get("planning_dirty_files"):
             raise ProtocolError("dirty-file set differs from the sealed planning baseline; return to $spec refine")
         if current["dirty_digest"] != state.get("planning_dirty_digest"):
@@ -542,9 +626,7 @@ def command_start(plan_dir: Path, note: str) -> None:
 
 def command_task(plan_dir: Path, task_id: str, status: str) -> None:
     state_path = plan_dir / "STATE.md"
-    state = read_metadata(state_path)
-    if state.get("lifecycle_state") != "InProgress":
-        raise ProtocolError("task updates require InProgress lifecycle state")
+    state = assert_valid_state(plan_dir, {"InProgress"})
     tasks = parse_state_tasks(state_path)
     if task_id not in tasks:
         raise ProtocolError(f"unknown task: {task_id}")
@@ -573,7 +655,13 @@ def command_task(plan_dir: Path, task_id: str, status: str) -> None:
         if incomplete:
             raise ProtocolError(f"{task_id} has incomplete dependencies: " + ", ".join(incomplete))
     if status == "Done":
-        if not evidence_for_task(plan_dir, task_id, state["contract_revision"], state["contract_digest"]):
+        if not evidence_for_task(
+            plan_dir,
+            task_id,
+            state["contract_revision"],
+            state["contract_digest"],
+            tasks[task_id]["attempts"],
+        ):
             raise ProtocolError(f"{task_id} cannot be Done without current completed RESULTS evidence")
     tasks[task_id]["status"] = status
     if status == "InProgress":
@@ -583,16 +671,19 @@ def command_task(plan_dir: Path, task_id: str, status: str) -> None:
 
 def command_finish(plan_dir: Path, note: str) -> None:
     state_path = plan_dir / "STATE.md"
-    state = read_metadata(state_path)
-    if state.get("lifecycle_state") != "InProgress":
-        raise ProtocolError("finish requires InProgress state")
+    state = assert_valid_state(plan_dir, {"InProgress"})
     tasks = parse_state_tasks(state_path)
     unfinished = [task_id for task_id, value in tasks.items() if value["status"] not in {"Done", "Superseded"}]
     if unfinished:
         raise ProtocolError("unfinished tasks: " + ", ".join(unfinished))
     digest = state["contract_digest"]
     revision = state["contract_revision"]
-    missing = [task_id for task_id, value in tasks.items() if value["status"] == "Done" and not evidence_for_task(plan_dir, task_id, revision, digest)]
+    missing = [
+        task_id
+        for task_id, value in tasks.items()
+        if value["status"] == "Done"
+        and not evidence_for_task(plan_dir, task_id, revision, digest, value["attempts"])
+    ]
     if missing:
         raise ProtocolError("tasks lack current completed RESULTS evidence: " + ", ".join(missing))
     if not has_current_summary(plan_dir, revision, digest):

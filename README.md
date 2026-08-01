@@ -60,11 +60,11 @@ The ownership boundary is strict:
 | Artifact | Owner | Rule |
 | --- | --- | --- |
 | `CONTEXT.md`, `SPEC.md`, `PLAN.md` | `$spec` | Immutable after sealing; any change starts a new contract revision |
-| `STATE.md` | Bundled validator | Neither model hand-edits lifecycle or task state |
+| `STATE.md` | Bundled validator after bootstrap | `$spec` creates it from the template; later lifecycle and task state are validator-managed |
 | `RESULTS.md` | `$ship` | Append-only and pinned to the contract revision and digest |
 | `REVIEW.md` | `$spec` | Append-only and pinned to the reviewed revision and digest |
 
-Sealing records a SHA-256 digest of the three contract artifacts plus the Git HEAD, branch, unrelated dirty-file set, and dirty-content fingerprint. `$ship` refuses to start if the contract was edited or the repository baseline drifted. A new `$spec refine` revision invalidates old completion state rather than letting stale evidence satisfy a changed plan.
+Sealing records a SHA-256 digest of the three contract artifacts plus the Git HEAD, branch, unrelated dirty-file set, and dirty-content fingerprint. `$ship` refuses to start if the contract was edited or the repository baseline drifted. State mutations also revalidate the active contract. A new `$spec refine` revision invalidates old completion state rather than letting stale evidence satisfy a changed plan.
 
 ## Workflow
 
@@ -186,27 +186,20 @@ To update, pull the clone and run the same `npx skills add .` command again.
 |       |-- agents/openai.yaml
 |       |-- references/
 |       `-- scripts/validate_plan.py
-|-- tests/
-|   |-- evaluations/cases.json
-|   |-- fixtures/draft-plan/
-|   `-- test_validate_plan.py
 `-- README.md
 ```
 
-Each skill contains its own validator and protocol references so it remains self-contained when installed. Tests ensure the copies stay byte-identical.
+Each skill contains its own validator and protocol references so it remains self-contained when installed.
 
 ## Development and validation
 
 Run before committing a skill change:
 
 ```bash
-python3 -m unittest discover -s tests -v
 python3 /path/to/skill-creator/scripts/quick_validate.py .agents/skills/spec
 python3 /path/to/skill-creator/scripts/quick_validate.py .agents/skills/ship
 npx skills add . --list
 ```
-
-The validator regression suite covers sealing, digest tampering, blocking questions, dependency errors, revisions, execution evidence, review/finalization gates, resumption state, and Git dirty-file and dirty-content drift. `tests/evaluations/cases.json` records the broader workflow scenarios to dogfood manually or automate later.
 
 ## Dogfooding gate
 
@@ -223,4 +216,4 @@ At minimum, test:
 - a passing review where finalization is delayed or declined;
 - refinement after partial implementation.
 
-Before considering a public release, also choose a license, evaluate skill-name collisions, decide whether plugin packaging is useful, test supported Codex surfaces, and review every protocol guarantee against the committed evaluation cases.
+Before considering a public release, also choose a license, evaluate skill-name collisions, decide whether plugin packaging is useful, test supported Codex surfaces, and review every protocol guarantee during dogfooding.

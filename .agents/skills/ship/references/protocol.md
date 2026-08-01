@@ -9,7 +9,7 @@ Use this protocol for every plan folder. The fenced JSON block at the top of eac
 | `CONTEXT.md` | `$spec` | Contract artifact; editable only while Draft, then immutable until a new revision starts |
 | `SPEC.md` | `$spec` | Contract artifact; editable only while Draft, then immutable until a new revision starts |
 | `PLAN.md` | `$spec` | Contract artifact; editable only while Draft, then immutable until a new revision starts |
-| `STATE.md` | Validator | Both skills invoke the validator; neither hand-edits it |
+| `STATE.md` | Validator after bootstrap | `$spec` creates it once from the template; both skills use the validator for every later mutation |
 | `RESULTS.md` | `$ship` | Append-only execution evidence |
 | `REVIEW.md` | `$spec` | Append-only review and finalization evidence |
 
@@ -47,7 +47,7 @@ python3 "$VALIDATOR" transition docs/plans/<plan> Finalized --actor spec --note 
 
 Use `revise` before modifying any sealed contract. It increments the revision, invalidates the old digest, returns the lifecycle to Draft, and resets task execution state. After editing, use `seal`; it synchronizes task IDs, records the Git HEAD, branch, unrelated dirty-file set and content fingerprint, computes the contract digest, validates the contract, and transitions to Ready.
 
-`start` refuses a plan when the current Git HEAD, unrelated dirty-file set, or dirty-content fingerprint differs from the sealed planning baseline. Contract artifacts are protected separately by their digest, and plan-local mutable artifacts are excluded from the dirty fingerprint. Return drift to `$spec refine`; do not bypass it. If Git is unavailable, the validator records that limitation and emits a warning.
+`start` refuses a plan when the current Git HEAD, branch, unrelated dirty-file set, or dirty-content fingerprint differs from the sealed planning baseline. Contract artifacts are protected separately by their digest, and plan-local mutable artifacts are excluded from the dirty fingerprint. Return drift to `$spec refine`; do not bypass it. If Git is unavailable, the validator records that limitation and emits a warning.
 
 ## Required evidence
 

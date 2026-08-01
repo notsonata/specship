@@ -17,7 +17,7 @@ Before operating on a plan:
 2. Read `references/artifact-templates.md` when creating an artifact or checking its required shape.
 3. Resolve this skill's `scripts/validate_plan.py` to an absolute path and use it for every lifecycle, revision, digest, baseline, and task-state mutation.
 
-Do not hand-edit `STATE.md`.
+Create the initial `STATE.md` from the supplied template, then use the validator for every mutation. Do not hand-edit it after bootstrap.
 
 ## Choose the operation
 
@@ -120,7 +120,7 @@ End with the folder and exact handoff: `$ship implement this plan: docs/plans/<p
 
 1. Read all plan artifacts and relevant repository changes.
 2. Run `validate` to expose existing drift or inconsistency.
-3. If the contract is sealed, run `revise` before editing it. This increments the revision, invalidates old execution evidence for completion, and returns the plan to Draft.
+3. If the contract is sealed and lifecycle is `Ready`, `Blocked`, `Failed`, or `ChangesRequired`, run `revise` before editing it. Other lifecycle states must complete their required review or execution transition first.
 4. Update `CONTEXT.md` with new evidence and preserve superseded decisions.
 5. Update `SPEC.md` and `PLAN.md` wherever requirements, tasks, order, or validation changed.
 6. Mark affected prior review conclusions stale in a new `REVIEW.md` note; do not alter old rounds.
