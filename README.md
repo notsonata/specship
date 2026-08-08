@@ -1,17 +1,17 @@
 # Specship
 
-Specship v0.5 is a lightweight two-model workflow for Codex:
+Specship v0.6 is a model-agnostic planning and execution workflow for coding agents:
 
-- **`$spec`** uses a stronger model to investigate a repository and write a reliable implementation plan.
-- **`$ship`** uses a faster workhorse model to implement the complete plan, validate it, and record the result.
+- **`$spec`** investigates a repository and writes a decision-complete execution contract.
+- **`$ship`** implements the complete contract, validates each mapped requirement, and records the result.
 
-The plan folder is the handoff, so the two skills can run in separate Codex conversations without shared chat history.
+The plan folder is the handoff, so the skills can run in separate agents or sessions without shared chat history. The planning and execution agents may use different model providers.
 
 > **Status: public source preview.** Specship is being dogfooded and is not yet presented as production-ready or submitted to a skill registry.
 
 ## Why Specship?
 
-Planning and implementation reward different strengths. A strong model is most useful when resolving ambiguity, understanding architecture, selecting an approach, and defining observable success. Once that judgment is captured in a self-contained Markdown plan, a faster model can execute it without rediscovering product intent.
+Planning and implementation reward different strengths. The planning agent resolves ambiguity, understands architecture, selects one approach, and defines observable success. It exposes those decisions through a self-contained Markdown contract so the execution agent can work directly without rediscovering product intent or making hidden design choices.
 
 Specship deliberately keeps this contract small:
 
@@ -19,7 +19,7 @@ Specship deliberately keeps this contract small:
 $spec plan
     |
     v
-Self-contained PLAN.md
+Decision-complete PLAN.md
     |
     v
 $ship implements the complete plan and writes RESULTS.md
@@ -28,18 +28,18 @@ $ship implements the complete plan and writes RESULTS.md
 Optional $spec review and REVIEW.md
 ```
 
-`$spec` never implements source changes. `$ship` never edits the plan, invents requirements, or executes only a selected task from it.
+`$spec` never implements source changes. `$ship` never edits the plan, invents requirements, redesigns settled decisions, or executes only a selected task from it.
 
 ## Plan folder
 
 ```text
 docs/plans/<plan>/
-|-- PLAN.md       # request, evidence, scope, approach, tasks, and validation
+|-- PLAN.md       # requirements, evidence, decisions, change map, tasks, and validation
 |-- RESULTS.md    # created by $ship; progress and execution evidence
 `-- REVIEW.md     # optional; created by $spec review when useful
 ```
 
-`PLAN.md` is self-contained and remains unchanged while `$ship` executes it. Git preserves plan history; Specship does not maintain a separate revision ledger, digest, lifecycle, or repository fingerprint.
+`PLAN.md` is self-contained and remains unchanged while `$ship` executes it. Its executor brief identifies the starting point and order; requirement IDs connect concrete file-and-symbol changes to tests and acceptance evidence. Git preserves plan history; Specship does not maintain a separate revision ledger, digest, lifecycle, or repository fingerprint.
 
 `RESULTS.md` supports interrupted execution by recording completed work and validation. On resume, `$ship` verifies that evidence against the actual repository before deciding what remains.
 
@@ -47,23 +47,25 @@ docs/plans/<plan>/
 
 ### 1. Create a plan
 
-Open a conversation using the stronger model:
+Start a planning-agent session:
 
 ```text
 $spec Add organization switching to the account settings flow.
 ```
 
-`$spec` reads repository instructions, investigates relevant code and tests, asks only genuinely blocking questions, and writes one executable `PLAN.md`.
+`$spec` reads repository instructions, investigates relevant code and tests, asks only genuinely blocking questions, and writes one decision-complete `PLAN.md`. The plan selects one approach and includes an executor brief, testable requirements, verified repository evidence, a file-and-symbol change map, ordered implementation steps, and requirement-to-validation traceability.
 
 ### 2. Implement the complete plan
 
-Open a separate workhorse-model conversation:
+Start a separate execution-agent session. It may use a different provider or a faster, less expensive model:
 
 ```text
 $ship implement this plan: docs/plans/organization-switching
 ```
 
-`$ship` reads the plan, reconciles any existing results with the repository, executes all incomplete tasks in dependency order, runs validation, and records evidence in `RESULTS.md`.
+`$ship` reads the plan once, turns its executor brief and dependency map into a checklist, and starts with the first named file and symbol. It reconciles existing results, executes all incomplete tasks in dependency order, validates mapped requirements, and records concise evidence in `RESULTS.md`.
+
+The executor does not broadly rediscover the repository or reconsider settled decisions. It expands inspection only when repository evidence contradicts the plan, a named location is missing, or validation exposes an unmapped boundary. A material contract gap returns to `$spec update` instead of becoming open-ended executor research.
 
 Normal repository activity is not automatically a blocker. `$ship` preserves unrelated changes and stops only when drift conflicts with the plan or invalidates a material assumption.
 
@@ -71,7 +73,7 @@ Validation proceeds from the smallest relevant reproduction and targeted test to
 
 ### 3. Review when useful
 
-Return to a strong-model conversation:
+Return to a planning/review-agent session:
 
 ```text
 $spec review docs/plans/organization-switching
@@ -97,7 +99,7 @@ If the correction changes or clarifies the plan, update it first:
 $spec update docs/plans/organization-switching to address R2-F1 and R2-F3
 ```
 
-Then return to the workhorse:
+Then return to the execution agent:
 
 ```text
 $ship implement this plan: docs/plans/organization-switching
@@ -152,10 +154,10 @@ $spec update docs/plans/organization-switching with this new requirement
 
 | Skill | Owns | Must not do |
 | --- | --- | --- |
-| `$spec` | Investigation, clarification, plan creation and updates, independent review | Implement source changes or rewrite execution evidence |
-| `$ship` | Complete-plan implementation, validation, resumable execution evidence | Edit `PLAN.md`, invent requirements, broaden scope, or review as `$spec` |
+| `$spec` | Investigation, clarification, exact contract creation and updates, independent review | Implement source changes or rewrite execution evidence |
+| `$ship` | Direct complete-plan implementation, requirement validation, resumable execution evidence | Edit `PLAN.md`, invent requirements, revisit settled decisions, broaden scope, or review as `$spec` |
 
-The target repository's `AGENTS.md` remains authoritative for implementation practices, testing, task tracking, and canonical documentation updates. Specship adds no separate finalization operation.
+The target repository's instruction files remain authoritative for implementation practices, testing, task tracking, and canonical documentation updates. Specship adds no separate finalization operation.
 
 ## Installation
 
@@ -163,22 +165,22 @@ The target repository's `AGENTS.md` remains authoritative for implementation pra
 
 - Git
 - Node.js 18 or newer for `npx skills`
-- Codex
+- A coding agent that supports the open Agent Skills format
 
-### Install globally for Codex
+### Install globally
 
 ```bash
-npx skills add notsonata/specship --skill spec --skill ship --agent codex --global --yes
+npx skills add notsonata/specship --skill spec --skill ship --global --yes
 ```
 
-Restart Codex if the skills do not appear. Type `$` and select **Spec** or **Ship**.
+The installer detects supported agents and prompts when a target must be selected. Use `--agent <agent-id>` to choose one explicitly, or repeat the flag to install into multiple agents. Restart the target agent if the skills do not appear.
 
 ### Install into one project
 
 Run inside the target repository without `--global`:
 
 ```bash
-npx skills add notsonata/specship --skill spec --skill ship --agent codex --yes
+npx skills add notsonata/specship --skill spec --skill ship --yes
 ```
 
 ### Install from a local clone
@@ -186,7 +188,7 @@ npx skills add notsonata/specship --skill spec --skill ship --agent codex --yes
 ```bash
 git clone https://github.com/notsonata/specship.git
 cd specship
-npx skills add . --skill spec --skill ship --agent codex --global --yes
+npx skills add . --skill spec --skill ship --global --yes
 ```
 
 ## Repository layout
@@ -196,10 +198,10 @@ npx skills add . --skill spec --skill ship --agent codex --global --yes
 |-- .agents/skills/
 |   |-- spec/
 |   |   |-- SKILL.md
-|   |   `-- agents/openai.yaml
+|   |   `-- agents/openai.yaml  # optional UI metadata used by compatible clients
 |   `-- ship/
 |       |-- SKILL.md
-|       `-- agents/openai.yaml
+|       `-- agents/openai.yaml  # optional UI metadata used by compatible clients
 `-- README.md
 ```
 
