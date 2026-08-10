@@ -34,15 +34,17 @@ Do not create `RESULTS.md` or `REVIEW.md` during initial planning. Do not edit `
 1. Read applicable repository instruction files and only the project documentation relevant to the request.
 2. Use the repository's preferred navigation mechanism. If a code index exists, use it before plain text search.
 3. Inspect the directly relevant implementation, tests, configuration, documentation, and local history.
-4. Trace the affected behavior across boundaries such as UI, API, storage, jobs, and deployment when applicable.
-5. Separate verified facts from assumptions and unresolved questions.
-6. Ask only questions whose answers could materially change scope, observable behavior, architecture, compatibility, data handling, security, rollout, reversibility, or acceptance criteria.
+4. Identify existing mechanisms that are candidates for reuse or extension before proposing a parallel path.
+5. Trace the affected behavior across boundaries such as UI, API, storage, jobs, and deployment when applicable.
+6. For migrations, replacements, and removals, build an affected-surface inventory covering maintained production callers, tests, fixtures, adapters, examples, and indirect construction unless repository authority excludes a surface.
+7. Separate verified facts from assumptions and unresolved questions.
+8. Ask only questions whose answers could materially change scope, observable behavior, architecture, compatibility, data handling, security, rollout, reversibility, or acceptance criteria.
 
 Do not ask for facts the repository can answer. Do not write an executable plan while a blocking decision remains.
 
 ### Decide, do not delegate judgment
 
-Select one implementation approach. Resolve naming, ownership, data flow, error behavior, compatibility, and testing strategy when relevant. Record alternatives only when the rejection explains an important constraint.
+Select one implementation approach. Resolve naming, ownership, data flow, error behavior, compatibility, and testing strategy when relevant. Prefer extending a sound existing mechanism over creating a duplicate path. Require every new abstraction or layer to be justified by a current requirement, real variation, or an established repository boundary. Record alternatives only when the rejection explains an important constraint.
 
 The plan must not tell `$ship` to choose an approach, investigate what should happen, decide between options, or fill in product behavior. If repository evidence is insufficient, ask the user or label a narrow operational assumption that cannot change observable behavior.
 
@@ -111,6 +113,7 @@ Describe the user-visible or developer-visible outcome.
   - Add or update the named test case and state what it must prove.
 - **Validation**:
   - `exact command`
+- **Integration gate**: `None`, or the actual code, diff, behavior, integration surface, and check to inspect when this task closes a meaningful cross-task integration boundary.
 - **Acceptance criteria**:
   - Observable result mapped to the listed requirements.
 
@@ -127,6 +130,8 @@ Describe the user-visible or developer-visible outcome.
 
 Keep `Executor brief` operational and short. Every requirement must appear in at least one task and in plan-wide validation. Every task must identify exact files or explicitly say that a new path will be created. Name symbols when the repository exposes stable symbols. Describe data shapes, signatures, state transitions, error paths, and ordering when the task depends on them.
 
+Use an integration gate only when a task closes a meaningful cross-task integration boundary, such as a UI-to-API flow, a schema-to-caller migration, or a multi-module behavior. Keep it inside the task rather than creating another artifact. A gate must inspect actual implementation or behavior and name proportionate validation; a passing task summary alone is not evidence.
+
 Avoid vague instructions such as “update the logic,” “handle edge cases,” “add tests,” “wire it up,” or “follow existing patterns” without naming the logic, cases, tests, connection points, or relevant pattern. Do not paste full implementations; use precise steps or pseudocode only where control flow would otherwise remain ambiguous.
 
 Specify validation from narrow to broad. Require a full repository suite only for cross-cutting or high-risk changes, repository rules, or an explicit user request. Do not use test count as a planning target.
@@ -141,7 +146,10 @@ Before handing off, verify all of the following:
 - every repository claim cites inspected evidence;
 - every requirement is testable and traced to a task and validation evidence;
 - the change map covers every expected file and integration boundary;
+- planned changes reuse or extend sound existing mechanisms where their semantics fit;
+- migrations, replacements, and removals include a complete affected-surface inventory;
 - tasks are dependency ordered and name concrete edits, tests, and commands;
+- integration gates exist only at meaningful boundaries and name actual implementation or behavior to inspect;
 - preserved behavior and non-goals are explicit;
 - the executor can start from `Executor brief` without broad repository discovery;
 - no task delegates material product or architecture judgment to `$ship`.
@@ -166,10 +174,13 @@ Treat review as a fresh check of the repository, not approval of `$ship`'s narra
 1. Read `PLAN.md`, `RESULTS.md` when present, and the complete existing `REVIEW.md` when present.
 2. Inspect implementation changes and relevant surrounding code.
 3. Recheck every unresolved finding from earlier rounds before searching for new issues.
-4. Check every requirement, task, acceptance criterion, preserved behavior, regression risk, change-map entry, and claim in `RESULTS.md`.
-5. Rerun proportionate validation when feasible and state anything not run.
-6. Report findings ordered by severity with file and location evidence.
-7. Create `REVIEW.md` only when a durable record is useful or requested. If it exists, reconcile earlier findings and append the current round.
+4. Check every requirement, task, acceptance criterion, preserved behavior, regression risk, change-map entry, integration gate, and claim in `RESULTS.md`.
+5. Check whether the implementation reused appropriate existing mechanisms, covered the affected surfaces, avoided duplicate paths, and kept proportional complexity for the requirements and repository architecture.
+6. Rerun proportionate validation when feasible and state anything not run.
+7. Report findings ordered by severity with file and location evidence.
+8. Create `REVIEW.md` only when a durable record is useful or requested. If it exists, reconcile earlier findings and append the current round.
+
+Treat unnecessary complexity as actionable only when it creates correctness, maintenance, contract, integration, or scope risk. Do not report subjective style preferences as findings.
 
 ### Maintain review findings
 

@@ -36,8 +36,9 @@ Keep startup bounded:
 2. Read `PLAN.md` in full, then read existing `RESULTS.md` and relevant `REVIEW.md` entries.
 3. Turn `Executor brief`, the change map, and task dependencies into a checklist in memory. Do not rewrite the plan.
 4. Inspect version-control status and the exact files and symbols named by the next incomplete task.
-5. Verify completed work against both `RESULTS.md` and the repository.
-6. Begin the first incomplete task.
+5. Identify the nearby callers, tests, boundaries, and sound existing mechanisms the task expects to reuse or extend.
+6. Verify completed work against both `RESULTS.md` and the repository.
+7. Begin the first incomplete task.
 
 Do not perform a broad repository scan, redesign the plan, or re-investigate settled decisions. Expand inspection only when a named file or symbol is missing, repository evidence contradicts the plan, a dependency is unclear, or validation exposes an unmapped boundary.
 
@@ -70,16 +71,14 @@ When blocked:
 
 For each incomplete task in dependency order:
 
-1. Verify its preconditions and dependencies.
-2. Open only its named files, symbols, and directly required supporting definitions.
-3. Apply its implementation steps in order using the smallest safe change.
-4. Preserve the listed constraints, invariants, and out-of-scope behavior.
-5. Add or update the specified tests.
-6. Run the task's narrow validation.
-7. Fix failures caused by the task. Do not pursue unrelated failures beyond recording evidence.
-8. Inspect the task diff for accidental scope expansion.
-9. Append one concise task entry to `RESULTS.md`.
-10. Continue automatically to the next ready task.
+1. **Inspect and inventory**: Verify preconditions and dependencies, then inspect only the named files, symbols, callers, tests, integration boundaries, and directly relevant reuse or extension points. For migrations, replacements, and removals, reconcile the plan's affected-surface inventory against the repository.
+2. **Implement**: Apply the task steps using the smallest coherent change. Preserve listed constraints, invariants, and out-of-scope behavior; do not create a parallel mechanism when a sound existing one fits.
+3. **Verify**: Add or update the specified tests and run the task's narrow validation.
+4. **Self-review**: Inspect the task diff and affected behavior for missed callers, regressions, accidental scope expansion, duplicate mechanisms, and unjustified abstractions or layers.
+5. **Fix and simplify**: Correct task-caused failures and self-review findings. Do not pursue unrelated failures beyond recording evidence.
+6. **Reverify**: Rerun the narrow checks affected by the final task state.
+7. If the task specifies an integration gate, inspect its named actual code, diff, behavior, or integration surface and run its proportionate check. Do not treat the task summary as gate evidence.
+8. Append one concise terminal task entry to `RESULTS.md`, then continue automatically to the next ready task.
 
 Use this result shape:
 
@@ -91,6 +90,7 @@ Use this result shape:
 - **Files changed**: `path/to/file`
 - **Implementation**: What changed, in concrete terms.
 - **Validation**: `command` — Passed | Failed | Not run (reason)
+- **Integration gate**: None, or inspected implementation/behavior and check result.
 - **Deviations**: None, or an exact contract-safe deviation and reason.
 - **Remaining risks**: None, or a bounded known risk.
 ```
@@ -125,8 +125,9 @@ After all tasks are done:
 1. Run remaining plan-wide validation.
 2. Verify every requirement against the plan's evidence table.
 3. Recheck every acceptance criterion against the repository result.
-4. Inspect the complete changed-file set for scope compliance and unrelated-work preservation.
-5. Append one final summary to `RESULTS.md`.
+4. Inspect the complete changed-file set and the smallest relevant actual code, diff, behavior, or integration surface for scope compliance, cross-task integration, regressions, appropriate reuse, and proportional complexity.
+5. Repair in-scope findings and rerun only the validation affected by those repairs.
+6. Append one final summary to `RESULTS.md`.
 
 Use this summary shape:
 
@@ -138,6 +139,7 @@ Use this summary shape:
 - **Requirements verified**: REQ-001, REQ-002
 - **Files changed**: `path/to/file`
 - **Plan-wide validation**: `command` — result
+- **Integrated inspection**: Actual code, behavior, or boundary checked and result.
 - **Deviations**: None, or exact deviations.
 - **Remaining risks**: None, or bounded risks.
 ```
