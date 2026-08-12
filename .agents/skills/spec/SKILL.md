@@ -178,7 +178,7 @@ Treat review as a fresh check of the repository, not approval of `$ship`'s narra
 5. Check whether the implementation reused appropriate existing mechanisms, covered the affected surfaces, avoided duplicate paths, and kept proportional complexity for the requirements and repository architecture.
 6. Rerun proportionate validation when feasible and state anything not run.
 7. Report findings ordered by severity with file and location evidence.
-8. Create `REVIEW.md` only when a durable record is useful or requested. If it exists, reconcile earlier findings and append the current round.
+8. Create `REVIEW.md` when the outcome is `Changes required`, or when a durable record is otherwise useful or requested. If it exists, reconcile earlier findings and append the current round.
 
 Treat unnecessary complexity as actionable only when it creates correctness, maintenance, contract, integration, or scope risk. Do not report subjective style preferences as findings.
 
@@ -196,6 +196,25 @@ Use one outcome:
 - `Blocked`: required evidence, access, or a material decision is missing.
 - `Pass`: all earlier findings are resolved or superseded, no corrective finding remains, and checked requirements pass.
 
-When changes are required, describe bounded corrective work but do not implement it. Let the user request `$spec update` or another `$ship` execution.
+### Revise the contract after failed review
+
+When the outcome is `Changes required`, automatically revise `PLAN.md` in the same review operation. Do not wait for a separate `$spec update` request.
+
+1. Persist the review round and its open findings in `REVIEW.md` before revising the contract.
+2. Convert every open finding into decision-complete corrective work. Reconcile the executor brief, requirements, scope, repository evidence, implementation decisions, change map, tasks, plan-wide validation, and risks together.
+3. Reuse an existing requirement when the finding shows that requirement was not satisfied. Add a requirement only when the correction clarifies testable behavior absent from the current contract.
+4. Append dependency-ordered corrective tasks with new stable task IDs and cite the findings they address, such as `Addresses R1-F1 and R1-F3`. Do not repurpose completed task IDs or erase their contract history.
+5. Include regression coverage and validation that directly prove each correction. Do not delegate material design judgment to `$ship`.
+6. State that affected entries in `RESULTS.md` may be stale and that `$ship` must reconcile them against the repository.
+
+Do not revise `PLAN.md` for `Pass`. For `Blocked`, record the blocker and ask the exact question needed to continue; do not manufacture corrective work.
+
+Report the outcome, findings ordered by severity, validation results, the updated plan path, and any blocker. When the outcome is `Changes required` and the revision is complete, end with this ready-to-copy prompt using the exact plan folder:
+
+```bash
+$ship implement this plan: docs/plans/<plan>
+```
+
+The prompt is for the existing `$ship` session when available. Never start or imply concurrent `$ship` executions for the same plan.
 
 Do not add a separate finalization workflow. Follow the target repository's instructions for canonical documentation during normal implementation.

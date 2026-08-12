@@ -109,10 +109,16 @@ Review checks the repository itself, not just `RESULTS.md`. It verifies requirem
 Review produces one of three outcomes:
 
 - **Pass** — checked requirements pass and no corrective finding remains.
-- **Changes required** — bounded implementation defects remain.
+- **Changes required** — bounded implementation defects remain; `$spec` records the findings and automatically revises `PLAN.md` with corrective tasks.
 - **Blocked** — required evidence, access, or a material decision is missing.
 
-A durable `REVIEW.md` is created only when useful or requested. Findings receive stable IDs so later reviews can resolve earlier issues without erasing their history.
+A durable `REVIEW.md` is created whenever changes are required, and otherwise when useful or requested. Findings receive stable IDs so later reviews can resolve earlier issues without erasing their history.
+
+After a `Changes required` review, `$spec` reports the findings and validation, identifies the revised plan, and ends with the exact prompt to send to the existing execution session:
+
+```bash
+$ship implement this plan: docs/plans/organization-switching
+```
 
 ## The plan folder
 
@@ -131,7 +137,7 @@ Git preserves contract history. Specship does not add a separate lifecycle datab
 
 ## Changes, blockers, and corrections
 
-Use `$spec update` when the contract itself needs to change:
+Use `$spec update` when new information outside a review requires the contract to change:
 
 ```text
 $spec update docs/plans/organization-switching with this new requirement
@@ -143,17 +149,18 @@ An update is appropriate when:
 - repository changes invalidate a plan assumption;
 - `$ship` discovers a missing product or architecture decision;
 - the named files or boundaries no longer match reality; or
-- review findings require new or clarified contract work.
+- new user or repository information requires clarified contract work before the next review.
 
 `$spec update` rewrites every affected part of `PLAN.md` so it remains internally consistent and self-contained. Existing execution evidence is preserved; `$ship` reconciles stale entries when it resumes.
+
+For a `Changes required` review, no separate update command is needed. The review itself appends new stable corrective tasks, references every open finding ID, updates requirement traceability and validation, and marks affected execution evidence as potentially stale.
 
 After review:
 
 | Situation | Next action |
 | --- | --- |
 | The implementation is correct | Finish. |
-| The existing plan already defines the correction | Run `$ship` again, then review again if needed. |
-| The correction changes or extends the contract | Run `$spec update`, then `$ship`, then review again. |
+| Review finds correctable implementation defects | `$spec review` revises the plan automatically; run `$ship` again, then review again. |
 | Evidence, access, or a decision is missing | Resolve the blocker before continuing. |
 
 ## Safety and scope
