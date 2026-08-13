@@ -165,7 +165,7 @@ End with the folder and exact handoff: `/ship implement this plan: docs/plans/<p
 2. Investigate the new information before editing.
 3. Update requirements, decisions, change map, tasks, traceability, and executor brief together so the contract remains consistent.
 4. Preserve useful history through version control rather than embedding a revision ledger.
-5. Reference applicable review finding IDs in corrective tasks, such as `Addresses R2-F1 and R2-F3`.
+5. Review-only fixes stay in `REVIEW.md`. Change `PLAN.md` only for the new information explicitly supplied to `/spec update`, never merely to absorb review findings.
 6. If execution began, report that prior result entries may be stale and `/ship` must reconcile them against the repository.
 
 Do not edit implementation files or rewrite execution history.
@@ -173,6 +173,8 @@ Do not edit implementation files or rewrite execution history.
 ## Review implementation
 
 Treat review as a fresh check of the repository, not approval of `/ship`'s narrative. Every invocation owns one new immutable review round.
+
+Never edit `PLAN.md` during review. The sealed plan remains the acceptance boundary; corrective execution instructions belong only in the current round's `REVIEW.md`.
 
 1. Read `PLAN.md`, root `RESULTS.md` when present, and every existing numbered review folder in order, including both `REVIEW.md` and `RESULTS.md` when present.
 2. Set the current round to one greater than the highest existing `reviews/round-NNN/` number, starting at `round-001`. Format `NNN` as a zero-padded three-digit number. Never reuse, overwrite, or skip an existing round number.
@@ -202,26 +204,21 @@ Use one outcome:
 - `Blocked`: required evidence, access, or a material decision is missing.
 - `Pass`: all earlier findings are resolved or superseded, no in-bound corrective finding remains, and checked requirements pass. Out-of-scope observations do not prevent `Pass`.
 
-### Revise the contract after failed review
+### Write corrective review instructions
 
-When the outcome is `Changes required`, automatically revise the execution instructions in `PLAN.md` in the same review operation. Do not wait for a separate `/spec update` request unless the convergence limit below applies.
+When the outcome is `Changes required`, write decision-complete corrective work into the current `REVIEW.md` for `/ship` without changing `PLAN.md`:
 
-1. Persist the current round and its open findings in `reviews/round-NNN/REVIEW.md` before revising the contract.
-2. Convert every open in-bound finding into decision-complete corrective work mapped to existing requirements. If a correction cannot map to the frozen acceptance boundary, reclassify it as an observation or blocker instead of expanding the contract.
-3. Reconcile the executor brief, repository evidence, implementation decisions, change map, tasks, plan-wide validation, and risks. Do not change the objective, requirements, scope, preserved behavior, or acceptance criteria during review.
-4. Append dependency-ordered corrective tasks with new stable task IDs and cite the findings they address, such as `Addresses R1-F1 and R1-F3`. Do not repurpose completed task IDs or erase their contract history.
-5. Include regression coverage and validation that directly prove each correction. Do not delegate material design judgment to `/ship`.
-6. Direct `/ship` to record this correction cycle only in `reviews/round-NNN/RESULTS.md`. Root `RESULTS.md` remains the non-review execution record and must not receive this correction cycle.
+1. Map every open finding to an existing requirement, acceptance criterion, scope boundary, or preserved behavior. If it cannot map to the frozen contract, reclassify it as an observation or blocker.
+2. For each finding, include the repository evidence, required correction, exact files or symbols, constraints to preserve, regression coverage, and validation that proves resolution.
+3. Order dependent corrections explicitly and identify shared integration checks. Do not assign new plan task IDs or rewrite completed plan tasks.
+4. Resolve implementation choices inside the review. Do not delegate material product or architecture judgment to `/ship`; use `Blocked` when such a decision is missing.
+5. Direct `/ship` to evaluate and execute the open findings from this `REVIEW.md` and record the correction cycle only in `reviews/round-NNN/RESULTS.md`. Root `RESULTS.md` must not receive review-correction evidence.
 
-### Enforce convergence
+There is no automatic retry or convergence cutoff. Each user-invoked `/spec review` creates the next numbered round, reconciles prior findings, and reports `Pass`, `Changes required`, or `Blocked` from current evidence.
 
-Before automatically revising, count the immediately preceding numbered review folders whose outcome was `Changes required`. If there are already two consecutive `Changes required` rounds, set the current outcome to `Blocked`, preserve the findings in the newly created round folder, and ask the user whether to authorize another correction cycle, accept the remaining risk, or revise the product scope. Do not revise `PLAN.md` or emit the `/ship` handoff.
+For `Blocked`, record the blocker and ask the exact question needed to continue; do not manufacture corrective work.
 
-A `Pass`, a new plan, an explicit user authorization for another correction cycle, or a user-authorized `/spec update` resets this count. Never evade the limit by renaming findings, opening a nominally new review sequence, or converting an out-of-scope observation into a requirement.
-
-Do not revise `PLAN.md` for `Pass`. For `Blocked`, record the blocker and ask the exact question needed to continue; do not manufacture corrective work.
-
-Report the outcome, findings ordered by severity, validation results, the exact `reviews/round-NNN/REVIEW.md` path, the updated plan path, and any blocker. When the outcome is `Changes required` and the revision is complete, state that corrective evidence belongs in `reviews/round-NNN/RESULTS.md`, then end with this ready-to-copy prompt using the exact plan folder:
+Report the outcome, findings ordered by severity, validation results, the exact `reviews/round-NNN/REVIEW.md` path, the unchanged plan path, and any blocker. When the outcome is `Changes required`, state that corrective evidence belongs in `reviews/round-NNN/RESULTS.md`, then end with this ready-to-copy prompt using the exact plan folder:
 
 ```bash
 /ship implement this plan: docs/plans/<plan>

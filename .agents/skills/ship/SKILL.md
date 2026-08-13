@@ -48,7 +48,9 @@ An interrupted session may resume the same plan. Do not repeat demonstrably comp
 
 Use root `RESULTS.md` for the initial implementation and for explicit `/spec update` work that is not tied to a review. When resuming corrective work created by a `Changes required` review, use the highest numbered active review folder and record the entire correction cycle in `reviews/round-NNN/RESULTS.md`.
 
-The active correction round must already contain `REVIEW.md`, and its open findings must map to the corrective tasks in `PLAN.md`. Resume its existing `RESULTS.md` when present. If the latest review is `Pass` or `Blocked`, or the review folder and plan disagree about the active correction work, do not guess; block and report the mismatch.
+The active correction round must already contain a `REVIEW.md` with outcome `Changes required` and decision-complete corrective work mapped to the frozen plan. Treat the active `REVIEW.md` as executable correction instructions while using `PLAN.md` as the immutable scope and acceptance boundary. Resume the round's existing `RESULTS.md` when present. If the latest review is `Pass` or `Blocked`, or the review and plan disagree about scope, do not guess; block and report the mismatch.
+
+Before editing, evaluate each open finding against the repository and frozen plan. If a finding is already resolved, record the evidence and validation without making a redundant change. If its required correction would broaden the plan or needs a missing product or architecture decision, block instead of implementing it.
 
 Never append corrective execution evidence to root `RESULTS.md`, write it into an earlier round, create a review folder, or edit a round's `REVIEW.md`.
 
@@ -62,6 +64,8 @@ Before editing, verify that the plan provides:
 - exact files or new paths for each task;
 - concrete implementation steps;
 - task-level tests or checks and plan-wide requirement evidence.
+
+For a correction cycle, verify that the active `REVIEW.md` also names the violated contract item, required correction, files or symbols, preserved constraints, regression coverage, and validation for every open finding. Execute those findings in their stated dependency order; do not require or create corrective tasks in `PLAN.md`.
 
 Continue when a missing detail is operational and is settled by explicit repository convention. Record any meaningful non-behavioral assumption in `RESULTS.md`.
 
@@ -77,7 +81,7 @@ When blocked:
 
 ## Execute task by task
 
-For each incomplete task in dependency order:
+For initial or updated plan execution, process each incomplete plan task in dependency order. For a correction cycle, process each open review finding in the order required by `REVIEW.md`:
 
 1. **Inspect and inventory**: Verify preconditions and dependencies, then inspect only the named files, symbols, callers, tests, integration boundaries, and directly relevant reuse or extension points. For migrations, replacements, and removals, reconcile the plan's affected-surface inventory against the repository.
 2. **Implement**: Apply the task steps using the smallest coherent change. Preserve listed constraints, invariants, and out-of-scope behavior; do not create a parallel mechanism when a sound existing one fits.

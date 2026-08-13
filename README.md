@@ -121,7 +121,7 @@ Review checks the repository itself, not just `RESULTS.md`. It verifies requirem
 Every review creates the next numbered folder, starting with `reviews/round-001/`, and writes that round to `REVIEW.md`. Review produces one of three outcomes:
 
 - **Pass** — checked requirements pass and no corrective finding remains.
-- **Changes required** — bounded implementation defects remain; `/spec` records the findings and automatically revises `PLAN.md` with corrective tasks.
+- **Changes required** — bounded implementation defects remain; `/spec` writes decision-complete corrective work into that round's `REVIEW.md` without changing `PLAN.md`.
 - **Blocked** — required evidence, access, or a material decision is missing.
 
 Each review is durable, including passing and blocked reviews. Findings receive stable IDs from their round, such as `R1-F1`, so later reviews can resolve earlier issues without overwriting history.
@@ -130,7 +130,7 @@ Review does not expand the product contract. A corrective finding must violate a
 
 Re-review verifies earlier findings and the corrective changes without starting another unrestricted audit. A new finding must be either a regression introduced by the corrections or a newly evidenced violation of the frozen contract in the corrected integrated result.
 
-After a `Changes required` review, `/spec` reports the findings and validation, identifies the revised plan, and ends with the exact prompt to send to the existing execution session:
+After a `Changes required` review, `/spec` reports the findings and validation, identifies the new review folder, and ends with the exact prompt to send to the existing execution session:
 
 ```bash
 /ship implement this plan: docs/plans/organization-switching
@@ -177,17 +177,16 @@ An update is appropriate when:
 
 `/spec update` rewrites every affected part of `PLAN.md` so it remains internally consistent and self-contained. Existing execution evidence is preserved; `/ship` reconciles stale entries when it resumes.
 
-For a `Changes required` review, no separate update command is normally needed. The review appends new stable corrective tasks mapped to existing requirements, references every open finding ID, updates validation, and directs corrective execution evidence to that round's `RESULTS.md`. It never adds requirements or broadens scope.
+For a `Changes required` review, no plan update is performed. The round's `REVIEW.md` contains the open findings, exact corrective work, affected files and symbols, preserved constraints, regression coverage, and validation. `/ship` evaluates and executes that review directly, then records evidence in the same round's `RESULTS.md`. `PLAN.md` stays frozen and review never adds requirements or broadens scope.
 
-After two consecutive `Changes required` rounds, automatic correction stops. If another review still finds in-scope defects, `/spec` reports `Blocked` and asks the user whether to authorize another correction cycle, accept the remaining risk, or revise product scope. It does not update the plan or emit another `/ship` prompt until the user decides.
+Review never revises `PLAN.md`, and there is no fixed correction-round limit. Every explicit `/spec review` creates the next numbered round and evaluates the current repository until the outcome is `Pass`, `Changes required`, or `Blocked`.
 
 After review:
 
 | Situation | Next action |
 | --- | --- |
 | The implementation is correct | Finish. |
-| Review finds correctable implementation defects | `/spec review` revises the plan automatically; run `/ship` again, then review again. |
-| Two consecutive correction rounds did not converge | Stop automatic revision and ask the user how to proceed. |
+| Review finds correctable implementation defects | Run `/ship` with the same plan folder; it executes the latest round's `REVIEW.md`, then review again. |
 | Evidence, access, or a decision is missing | Resolve the blocker before continuing. |
 
 ## Safety and scope
