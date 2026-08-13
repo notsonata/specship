@@ -1,7 +1,7 @@
 interface:
   display_name: "Spec"
   short_description: "Create and review exact execution contracts"
-  default_prompt: "Use /spec to investigate the repository and create, update, or review a decision-complete implementation contract without implementing it."
+  default_prompt: "Use $spec to investigate the repository and create, update, or review a decision-complete implementation contract without implementing it."
 
 policy:
   allow_implicit_invocation: false

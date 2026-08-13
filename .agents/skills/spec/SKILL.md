@@ -1,11 +1,21 @@
 ---
 name: spec
-description: Investigate a software repository and create, update, or independently review a decision-complete implementation contract under docs/plans without implementing source changes. Use when the user invokes /spec to prepare an exact handoff for a separate execution agent, including agents with less reasoning capacity, or to review work completed from that contract.
+description: Investigate a software repository and create, update, or independently review a decision-complete implementation contract under docs/plans without implementing source changes. Use when the user explicitly invokes the spec skill to prepare an exact handoff for a separate execution agent, including agents with less reasoning capacity, or to review work completed from that contract.
 ---
 
 # Spec
 
 Act as the planning and review agent. Turn the user's request and verified repository evidence into a compact implementation contract that a separate agent can execute without this session, hidden assumptions, or material design decisions. Never implement source changes, including during review.
+
+## Use host-native explicit syntax
+
+Use the invocation syntax native to the active host:
+
+- Codex: `$spec` and `$ship`.
+- Slash-command hosts: `/spec` and `/ship`.
+- Other hosts: select or invoke the installed `spec` and `ship` skills using that host's normal skill interface.
+
+Preserve the active host's syntax in every ready-to-copy handoff. The examples below use `/spec` and `/ship` as protocol notation unless both host forms are shown; do not present slash syntax as universal.
 
 ## Choose the operation
 
@@ -20,12 +30,12 @@ Require the exact folder before updating or reviewing. Never guess or silently r
 Store each plan at `docs/plans/<plain-kebab-case-slug>/`:
 
 ```text
-PLAN.md                       # immutable execution contract owned by /spec
-RESULTS.md                    # non-review execution log owned by /ship
+PLAN.md                       # execution contract owned by spec
+RESULTS.md                    # non-review execution log owned by ship
 reviews/
 └── round-001/
-    ├── REVIEW.md             # one review round owned by /spec
-    └── RESULTS.md            # that round's corrective execution owned by /ship
+    ├── REVIEW.md             # one immutable review round owned by spec
+    └── RESULTS.md            # that round's corrective execution owned by ship
 ```
 
 Do not create `RESULTS.md` or `reviews/` during initial planning. Never write review findings to root `REVIEW.md`. Do not edit any `RESULTS.md`. Do not edit `PLAN.md` while `/ship` is executing it.
@@ -57,6 +67,8 @@ Use the following sections in this order. Omit a section only when it truly does
 
 ```markdown
 # Plan: <outcome>
+
+**Plan revision**: 1
 
 ## Executor brief
 
@@ -133,6 +145,8 @@ Describe the user-visible or developer-visible outcome.
 
 Keep `Executor brief` operational and short. Every requirement must appear in at least one task and in plan-wide validation. Every task must identify exact files or explicitly say that a new path will be created. Name symbols when the repository exposes stable symbols. Describe data shapes, signatures, state transitions, error paths, and ordering when the task depends on them.
 
+Every new plan starts at revision `1`. `Plan revision` is only an identity marker for reconciling artifacts after an explicit update; it is not a lifecycle state, lock, digest, or approval mechanism.
+
 Use an integration gate only when a task closes a meaningful cross-task integration boundary, such as a UI-to-API flow, a schema-to-caller migration, or a multi-module behavior. Keep it inside the task rather than creating another artifact. A gate must inspect actual implementation or behavior and name proportionate validation; a passing task summary alone is not evidence.
 
 Avoid vague instructions such as “update the logic,” “handle edge cases,” “add tests,” “wire it up,” or “follow existing patterns” without naming the logic, cases, tests, connection points, or relevant pattern. Do not paste full implementations; use precise steps or pseudocode only where control flow would otherwise remain ambiguous.
@@ -157,16 +171,21 @@ Before handing off, verify all of the following:
 - the executor can start from `Executor brief` without broad repository discovery;
 - no task delegates material product or architecture judgment to `/ship`.
 
-End with the folder and exact handoff: `/ship implement this plan: docs/plans/<plan>`.
+End with the folder and an exact handoff using the active host's syntax: `$ship implement this plan: docs/plans/<plan>` in Codex or `/ship implement this plan: docs/plans/<plan>` on slash-command hosts.
 
 ## Update a plan
 
 1. Read `PLAN.md`, root `RESULTS.md`, all existing `reviews/round-NNN/REVIEW.md` and `reviews/round-NNN/RESULTS.md` files, and relevant repository changes.
-2. Investigate the new information before editing.
-3. Update requirements, decisions, change map, tasks, traceability, and executor brief together so the contract remains consistent.
-4. Preserve useful history through version control rather than embedding a revision ledger.
-5. Review-only fixes stay in `REVIEW.md`. Change `PLAN.md` only for the new information explicitly supplied to `/spec update`, never merely to absorb review findings.
-6. If execution began, report that prior result entries may be stale and `/ship` must reconcile them against the repository.
+2. Read `Plan revision`; treat a legacy plan with no revision field as revision `1`.
+3. Investigate the new information before editing.
+4. Update requirements, decisions, change map, tasks, traceability, and executor brief together so the contract remains consistent.
+5. Set `Plan revision` to the previous integer plus one. Every explicit update must increment the plan revision by exactly one.
+6. Add or replace `## Revision impact` with the prior revision, current revision, and exact task IDs that `/ship` must revalidate. State `All tasks` when the new information invalidates the whole execution contract.
+7. Preserve useful history through version control rather than embedding a revision ledger.
+8. Review-only fixes stay in `REVIEW.md`. Change `PLAN.md` only for the new information explicitly supplied to `/spec update`, never merely to absorb review findings.
+9. Report that execution and review artifacts from an older plan revision may be stale and `/ship` must reconcile the named revision-impact tasks against the repository.
+
+An unexecuted `Changes required` review from an older plan revision is historical after an update. Do not edit its immutable `REVIEW.md`; treat its correction work as `Superseded by plan revision <current>`. The next `/ship` executes the updated plan and writes root `RESULTS.md`. A later `/spec review` creates a new round against the current revision.
 
 Do not edit implementation files or rewrite execution history.
 
@@ -176,7 +195,7 @@ Treat review as a fresh check of the repository, not approval of `/ship`'s narra
 
 Never edit `PLAN.md` during review. The sealed plan remains the acceptance boundary; corrective execution instructions belong only in the current round's `REVIEW.md`.
 
-1. Read `PLAN.md`, root `RESULTS.md` when present, and every existing numbered review folder in order, including both `REVIEW.md` and `RESULTS.md` when present.
+1. Read `PLAN.md`, root `RESULTS.md` when present, and every existing numbered review folder in order, including both `REVIEW.md` and `RESULTS.md` when present. Treat a legacy plan, review, or result artifact with no `Plan revision` as revision `1`.
 2. Set the current round to one greater than the highest existing `reviews/round-NNN/` number, starting at `round-001`. Format `NNN` as a zero-padded three-digit number. Never reuse, overwrite, or skip an existing round number.
 3. Freeze the acceptance boundary to the current objective, requirements, scope, acceptance criteria, and preserved behavior. Never add or broaden a requirement during review.
 4. On the first review, inspect the implementation changes and relevant surrounding code. A corrective finding must demonstrate a violation of the frozen acceptance boundary or a regression in an in-scope changed surface.
@@ -184,7 +203,7 @@ Never edit `PLAN.md` during review. The sealed plan remains the acceptance bound
 6. Check applicable tasks, change-map entries, integration gates, root execution evidence, and round-scoped corrective evidence, including whether the implementation reused appropriate existing mechanisms and kept proportional complexity for the contract.
 7. Rerun proportionate validation when feasible and state anything not run.
 8. Report findings ordered by severity with file and location evidence.
-9. Create `reviews/round-NNN/` and write this round only to `reviews/round-NNN/REVIEW.md` for every outcome: `Pass`, `Changes required`, or `Blocked`.
+9. Create `reviews/round-NNN/` and write this round only to `reviews/round-NNN/REVIEW.md` for every outcome: `Pass`, `Changes required`, or `Blocked`. Record the current plan revision explicitly in every new review.
 
 Treat unnecessary complexity as actionable only when it creates correctness, maintenance, contract, integration, or scope risk. Do not report subjective style preferences as findings.
 
@@ -204,6 +223,65 @@ Use one outcome:
 - `Blocked`: required evidence, access, or a material decision is missing.
 - `Pass`: all earlier findings are resolved or superseded, no in-bound corrective finding remains, and checked requirements pass. Out-of-scope observations do not prevent `Pass`.
 
+Use this exact review shape:
+
+```markdown
+# Review: round-NNN
+
+- **Plan**: `docs/plans/<plan>/PLAN.md`
+- **Plan revision**: <integer>
+
+## Outcome
+
+**Pass | Changes required | Blocked**
+
+## Contract checked
+
+- **Requirements**: REQ-001, REQ-002
+- **Acceptance criteria**: Checked | Partially checked | Not checked (reason)
+- **Scope and preserved behavior**: Checked | Partially checked | Not checked (reason)
+
+## Prior findings
+
+- R1-F1 — Resolved | Open | Superseded — evidence, or `None`.
+
+## Findings
+
+### R1-F1: <title>
+
+- **Status**: Open
+- **Severity**: High | Medium | Low
+- **Contract mapping**: REQ-001, named acceptance criterion, scope boundary, or preserved behavior
+- **Evidence**: `path/to/file:line` and observed behavior
+- **Violation**: Exact contract failure
+- **Required correction**: Decision-complete implementation instruction
+- **Files and symbols**: `path/to/file` — `symbolName`
+- **Constraints preserved**: Behavior that must remain unchanged
+- **Regression coverage**: Exact test or check to add or update
+- **Validation**: `exact command`
+- **Dependencies**: None, or earlier finding IDs
+
+Use `None` when there are no findings.
+
+## Requirement results
+
+| Requirement | Result | Evidence |
+| --- | --- | --- |
+| REQ-001 | Pass | Named test, code, or behavior |
+
+## Validation
+
+- `command` — Passed | Failed | Not run (reason)
+
+## Observations
+
+- Out-of-scope or optional note, or `None`.
+
+## Remaining risks
+
+- Bounded risk, or `None`.
+```
+
 ### Write corrective review instructions
 
 When the outcome is `Changes required`, write decision-complete corrective work into the current `REVIEW.md` for `/ship` without changing `PLAN.md`:
@@ -218,9 +296,11 @@ There is no automatic retry or convergence cutoff. Each user-invoked `/spec revi
 
 For `Blocked`, record the blocker and ask the exact question needed to continue; do not manufacture corrective work.
 
-Report the outcome, findings ordered by severity, validation results, the exact `reviews/round-NNN/REVIEW.md` path, the unchanged plan path, and any blocker. When the outcome is `Changes required`, state that corrective evidence belongs in `reviews/round-NNN/RESULTS.md`, then end with this ready-to-copy prompt using the exact plan folder:
+Report the outcome, findings ordered by severity, validation results, the exact `reviews/round-NNN/REVIEW.md` path, the unchanged plan path and revision, and any blocker. When the outcome is `Changes required`, state that corrective evidence belongs in `reviews/round-NNN/RESULTS.md`, then end with a ready-to-copy prompt using the exact plan folder and the active host's syntax:
 
 ```bash
+$ship implement this plan: docs/plans/<plan>
+# or, on slash-command hosts:
 /ship implement this plan: docs/plans/<plan>
 ```
 

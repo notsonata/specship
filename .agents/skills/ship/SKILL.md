@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Implement or resume one complete /spec execution contract from an explicit docs/plans folder, validate every mapped requirement, and record concise evidence in RESULTS.md without changing the plan or inventing decisions. Use when the user invokes /ship with a plan folder and wants direct, bounded execution by any compatible coding agent.
+description: Implement or resume one complete spec execution contract from an explicit docs/plans folder, validate every mapped requirement, and record concise evidence in RESULTS.md without changing the plan or inventing decisions. Use when the user explicitly invokes the ship skill with a plan folder and wants direct, bounded execution by any compatible coding agent.
 ---
 
 # Ship
@@ -8,6 +8,16 @@ description: Implement or resume one complete /spec execution contract from an e
 Act as the execution agent. Implement one complete plan, verify its requirements, record concise evidence, and stop for optional independent review.
 
 Treat `PLAN.md` and the repository as the source of truth. Do not depend on the planning session.
+
+## Use host-native explicit syntax
+
+Use the invocation syntax native to the active host:
+
+- Codex: `$ship` and `$spec`.
+- Slash-command hosts: `/ship` and `/spec`.
+- Other hosts: select or invoke the installed `ship` and `spec` skills using that host's normal skill interface.
+
+Preserve the active host's syntax in every ready-to-copy handoff. The examples below use `/ship` and `/spec` as protocol notation unless both host forms are shown; do not present slash syntax as universal.
 
 ## Require one complete plan
 
@@ -33,7 +43,7 @@ Require an explicit folder. Never guess the newest plan, combine plans, or reduc
 Keep startup bounded:
 
 1. Read applicable repository instruction files.
-2. Read `PLAN.md` in full, then read root `RESULTS.md` and every existing `reviews/round-NNN/REVIEW.md` and `reviews/round-NNN/RESULTS.md` in order.
+2. Read `PLAN.md` in full, including its integer `Plan revision`, then read root `RESULTS.md` and every existing `reviews/round-NNN/REVIEW.md` and `reviews/round-NNN/RESULTS.md` in order. Treat every legacy plan, review, or result artifact with no revision as revision `1`.
 3. Turn `Executor brief`, the change map, and task dependencies into a checklist in memory. Do not rewrite the plan.
 4. Inspect version-control status and the exact files and symbols named by the next incomplete task.
 5. Identify the nearby callers, tests, boundaries, and sound existing mechanisms the task expects to reuse or extend.
@@ -46,9 +56,13 @@ An interrupted session may resume the same plan. Do not repeat demonstrably comp
 
 ## Select the execution record
 
-Use root `RESULTS.md` for the initial implementation and for explicit `/spec update` work that is not tied to a review. When resuming corrective work created by a `Changes required` review, use the highest numbered active review folder and record the entire correction cycle in `reviews/round-NNN/RESULTS.md`.
+Use root `RESULTS.md` for the initial implementation and for explicit `/spec update` work that is not tied to a review. Every task entry and final summary must record the current plan revision. After an update, revalidate every task named in `Revision impact`; never infer completion solely from a matching task ID in an older revision's results.
 
-The active correction round must already contain a `REVIEW.md` with outcome `Changes required` and decision-complete corrective work mapped to the frozen plan. Treat the active `REVIEW.md` as executable correction instructions while using `PLAN.md` as the immutable scope and acceptance boundary. Resume the round's existing `RESULTS.md` when present. If the latest review is `Pass` or `Blocked`, or the review and plan disagree about scope, do not guess; block and report the mismatch.
+When resuming corrective work created by a `Changes required` review, use the highest numbered review whose explicit or legacy-effective `Plan revision` equals the current plan revision and record the entire correction cycle in `reviews/round-NNN/RESULTS.md`.
+
+The active correction round must already contain a `REVIEW.md` with outcome `Changes required` and decision-complete corrective work mapped to the frozen plan. Treat the active `REVIEW.md` as executable correction instructions while using `PLAN.md` as the immutable scope and acceptance boundary. Resume the round's existing `RESULTS.md` when present. If the latest current-revision review is `Pass` or `Blocked`, or the review and plan disagree about scope, do not guess; block and report the mismatch.
+
+A review from an older plan revision is immutable historical evidence, not active correction work. Treat it as superseded by the current revision and execute the updated `PLAN.md` into root `RESULTS.md` instead.
 
 Before editing, evaluate each open finding against the repository and frozen plan. If a finding is already resolved, record the evidence and validation without making a redundant change. If its required correction would broaden the plan or needs a missing product or architecture decision, block instead of implementing it.
 
@@ -77,7 +91,7 @@ When blocked:
 
 1. Preserve safe partial work.
 2. Append an entry to the active execution record with the task, requirement IDs, observed evidence, partial changes, validation, and one exact blocking question.
-3. Tell the user to return to `/spec update docs/plans/<plan>`.
+3. Tell the user to return to `$spec update docs/plans/<plan>` in Codex or `/spec update docs/plans/<plan>` on slash-command hosts, using the active host's syntax.
 
 ## Execute task by task
 
@@ -98,6 +112,7 @@ Use this result shape:
 ## TASK-001: <outcome>
 
 - **Status**: Done | Blocked | Failed
+- **Plan revision**: <integer>
 - **Requirements**: REQ-001
 - **Files changed**: `path/to/file`
 - **Implementation**: What changed, in concrete terms.
@@ -108,6 +123,24 @@ Use this result shape:
 ```
 
 Do not narrate routine exploration or log every command. Record evidence needed to resume work or review the result.
+
+For correction cycles, use this finding-scoped result shape instead of plan task IDs:
+
+```markdown
+## R1-F1: <outcome>
+
+- **Status**: Done | Already resolved | Blocked | Failed
+- **Plan revision**: <integer>
+- **Finding**: R1-F1
+- **Contract mapping**: REQ-001, named acceptance criterion, scope boundary, or preserved behavior
+- **Files changed**: `path/to/file`, or `None`
+- **Implementation**: What changed, or why no change was needed.
+- **Regression coverage**: Test or check added or updated.
+- **Validation**: `command` — Passed | Failed | Not run (reason)
+- **Integration check**: None, or inspected implementation/behavior and result.
+- **Deviations**: None, or exact contract-safe deviation.
+- **Remaining risks**: None, or bounded risk.
+```
 
 ## Keep investigation bounded
 
@@ -147,6 +180,7 @@ Use this summary shape:
 ## Plan execution summary
 
 - **Outcome**: Implemented | Blocked | Failed
+- **Plan revision**: <integer>
 - **Tasks**: TASK-001, TASK-002
 - **Requirements verified**: REQ-001, REQ-002
 - **Files changed**: `path/to/file`
@@ -156,9 +190,13 @@ Use this summary shape:
 - **Remaining risks**: None, or bounded risks.
 ```
 
-Report the outcome, files changed, validation, and required follow-up. Always end an `Implemented` result with this ready-to-copy command using the exact active plan folder:
+For a correction cycle, replace `Tasks` with `Findings` and list the executed finding IDs.
+
+Report the outcome, files changed, validation, and required follow-up. Always end an `Implemented` result with a ready-to-copy review command using the exact active plan folder and the active host's syntax:
 
 ```text
+$spec review docs/plans/<plan>
+# or, on slash-command hosts:
 /spec review docs/plans/<plan>
 ```
 
