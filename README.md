@@ -9,7 +9,7 @@ Specship provides two project-scoped skills:
 
 The plan folder is the handoff. Planning and implementation can happen in separate agents, sessions, or model providers without relying on shared chat history.
 
-> **Status:** Specship v0.6 is a public source preview. It is being dogfooded and is not yet presented as production-ready.
+> **Status:** Specship v0.7 is a public source preview. It is being dogfooded and is not yet presented as production-ready.
 
 ## Why use Specship?
 
@@ -40,6 +40,12 @@ docs/plans/<plan>/RESULTS.md
       |
       v
 optional /spec review docs/plans/<plan>
+      |
+      v
+docs/plans/<plan>/reviews/round-001/REVIEW.md
+      |
+      v (when changes are required)
+/ship writes reviews/round-001/RESULTS.md
 ```
 
 ### 1. Create the contract
@@ -112,13 +118,13 @@ Run an independent review from a planning/review session:
 
 Review checks the repository itself, not just `RESULTS.md`. It verifies requirements, acceptance criteria, preserved behavior, changed surfaces, integration gates, validation claims, reuse, duplicate mechanisms, and concrete complexity risks.
 
-Review produces one of three outcomes:
+Every review creates the next numbered folder, starting with `reviews/round-001/`, and writes that round to `REVIEW.md`. Review produces one of three outcomes:
 
 - **Pass** — checked requirements pass and no corrective finding remains.
 - **Changes required** — bounded implementation defects remain; `/spec` records the findings and automatically revises `PLAN.md` with corrective tasks.
 - **Blocked** — required evidence, access, or a material decision is missing.
 
-A durable `REVIEW.md` is created whenever changes are required, and otherwise when useful or requested. Findings receive stable IDs so later reviews can resolve earlier issues without erasing their history.
+Each review is durable, including passing and blocked reviews. Findings receive stable IDs from their round, such as `R1-F1`, so later reviews can resolve earlier issues without overwriting history.
 
 Review does not expand the product contract. A corrective finding must violate an existing requirement, acceptance criterion, scope boundary, or preserved behavior. Issues requiring new behavior are reported as out-of-scope observations and do not prevent a passing contract review.
 
@@ -130,18 +136,26 @@ After a `Changes required` review, `/spec` reports the findings and validation, 
 /ship implement this plan: docs/plans/organization-switching
 ```
 
+That corrective `/ship` run writes only to the same round folder's `RESULTS.md`. Root `RESULTS.md` remains reserved for non-review execution. A subsequent `/spec review` creates the next folder, such as `reviews/round-002/`.
+
 ## The plan folder
 
 Each request gets one plain kebab-case folder:
 
 ```text
 docs/plans/<plan>/
-├── PLAN.md       # contract created and owned by /spec
-├── RESULTS.md    # execution evidence created and owned by /ship
-└── REVIEW.md     # optional independent review record owned by /spec
+├── PLAN.md                       # contract created and owned by /spec
+├── RESULTS.md                    # non-review execution evidence owned by /ship
+└── reviews/
+    ├── round-001/
+    │   ├── REVIEW.md             # first review owned by /spec
+    │   └── RESULTS.md            # first corrective execution owned by /ship
+    └── round-002/
+        ├── REVIEW.md             # second review owned by /spec
+        └── RESULTS.md            # second corrective execution, when needed
 ```
 
-`PLAN.md` remains unchanged while `/ship` executes it. `RESULTS.md` makes execution resumable by recording completed tasks, validation, deviations, and remaining risks. On resume, `/ship` verifies recorded evidence against the repository before deciding what remains.
+`PLAN.md` remains unchanged while `/ship` executes it. Root `RESULTS.md` makes initial execution and non-review plan updates resumable. Each review correction cycle keeps its own review and execution evidence together, so later rounds never rewrite or contaminate earlier bookkeeping. On resume, `/ship` verifies the active execution record against the repository before deciding what remains.
 
 Git preserves contract history. Specship does not add a separate lifecycle database, repository fingerprint, scheduler, or mandatory handover document.
 
@@ -163,7 +177,7 @@ An update is appropriate when:
 
 `/spec update` rewrites every affected part of `PLAN.md` so it remains internally consistent and self-contained. Existing execution evidence is preserved; `/ship` reconciles stale entries when it resumes.
 
-For a `Changes required` review, no separate update command is normally needed. The review appends new stable corrective tasks mapped to existing requirements, references every open finding ID, updates validation, and marks affected execution evidence as potentially stale. It never adds requirements or broadens scope.
+For a `Changes required` review, no separate update command is normally needed. The review appends new stable corrective tasks mapped to existing requirements, references every open finding ID, updates validation, and directs corrective execution evidence to that round's `RESULTS.md`. It never adds requirements or broadens scope.
 
 After two consecutive `Changes required` rounds, automatic correction stops. If another review still finds in-scope defects, `/spec` reports `Blocked` and asks the user whether to authorize another correction cycle, accept the remaining risk, or revise product scope. It does not update the plan or emit another `/ship` prompt until the user decides.
 

@@ -33,7 +33,7 @@ Require an explicit folder. Never guess the newest plan, combine plans, or reduc
 Keep startup bounded:
 
 1. Read applicable repository instruction files.
-2. Read `PLAN.md` in full, then read existing `RESULTS.md` and relevant `REVIEW.md` entries.
+2. Read `PLAN.md` in full, then read root `RESULTS.md` and every existing `reviews/round-NNN/REVIEW.md` and `reviews/round-NNN/RESULTS.md` in order.
 3. Turn `Executor brief`, the change map, and task dependencies into a checklist in memory. Do not rewrite the plan.
 4. Inspect version-control status and the exact files and symbols named by the next incomplete task.
 5. Identify the nearby callers, tests, boundaries, and sound existing mechanisms the task expects to reuse or extend.
@@ -43,6 +43,14 @@ Keep startup bounded:
 Do not perform a broad repository scan, redesign the plan, or re-investigate settled decisions. Expand inspection only when a named file or symbol is missing, repository evidence contradicts the plan, a dependency is unclear, or validation exposes an unmapped boundary.
 
 An interrupted session may resume the same plan. Do not repeat demonstrably complete edits or passing checks whose evidence is still current.
+
+## Select the execution record
+
+Use root `RESULTS.md` for the initial implementation and for explicit `/spec update` work that is not tied to a review. When resuming corrective work created by a `Changes required` review, use the highest numbered active review folder and record the entire correction cycle in `reviews/round-NNN/RESULTS.md`.
+
+The active correction round must already contain `REVIEW.md`, and its open findings must map to the corrective tasks in `PLAN.md`. Resume its existing `RESULTS.md` when present. If the latest review is `Pass` or `Blocked`, or the review folder and plan disagree about the active correction work, do not guess; block and report the mismatch.
+
+Never append corrective execution evidence to root `RESULTS.md`, write it into an earlier round, create a review folder, or edit a round's `REVIEW.md`.
 
 ## Check contract executability
 
@@ -64,7 +72,7 @@ Block when the gap requires product or architecture judgment. Do not compensate 
 When blocked:
 
 1. Preserve safe partial work.
-2. Append a `RESULTS.md` entry with the task, requirement IDs, observed evidence, partial changes, validation, and one exact blocking question.
+2. Append an entry to the active execution record with the task, requirement IDs, observed evidence, partial changes, validation, and one exact blocking question.
 3. Tell the user to return to `/spec update docs/plans/<plan>`.
 
 ## Execute task by task
@@ -78,7 +86,7 @@ For each incomplete task in dependency order:
 5. **Fix and simplify**: Correct task-caused failures and self-review findings. Do not pursue unrelated failures beyond recording evidence.
 6. **Reverify**: Rerun the narrow checks affected by the final task state.
 7. If the task specifies an integration gate, inspect its named actual code, diff, behavior, or integration surface and run its proportionate check. Do not treat the task summary as gate evidence.
-8. Append one concise terminal task entry to `RESULTS.md`, then continue automatically to the next ready task.
+8. Append one concise terminal task entry to the active execution record, then continue automatically to the next ready task.
 
 Use this result shape:
 
@@ -127,7 +135,7 @@ After all tasks are done:
 3. Recheck every acceptance criterion against the repository result.
 4. Inspect the complete changed-file set and the smallest relevant actual code, diff, behavior, or integration surface for scope compliance, cross-task integration, regressions, appropriate reuse, and proportional complexity.
 5. Repair in-scope findings and rerun only the validation affected by those repairs.
-6. Append one final summary to `RESULTS.md`.
+6. Append one final summary to the active execution record.
 
 Use this summary shape:
 

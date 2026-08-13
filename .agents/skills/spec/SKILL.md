@@ -20,12 +20,15 @@ Require the exact folder before updating or reviewing. Never guess or silently r
 Store each plan at `docs/plans/<plain-kebab-case-slug>/`:
 
 ```text
-PLAN.md       # immutable execution contract owned by /spec
-RESULTS.md    # execution log created by /ship
-REVIEW.md     # optional review record created by /spec review
+PLAN.md                       # immutable execution contract owned by /spec
+RESULTS.md                    # non-review execution log owned by /ship
+reviews/
+└── round-001/
+    ├── REVIEW.md             # one review round owned by /spec
+    └── RESULTS.md            # that round's corrective execution owned by /ship
 ```
 
-Do not create `RESULTS.md` or `REVIEW.md` during initial planning. Do not edit `RESULTS.md`. Do not edit `PLAN.md` while `/ship` is executing it.
+Do not create `RESULTS.md` or `reviews/` during initial planning. Never write review findings to root `REVIEW.md`. Do not edit any `RESULTS.md`. Do not edit `PLAN.md` while `/ship` is executing it.
 
 ## Create a plan
 
@@ -158,7 +161,7 @@ End with the folder and exact handoff: `/ship implement this plan: docs/plans/<p
 
 ## Update a plan
 
-1. Read `PLAN.md`, existing `RESULTS.md` and `REVIEW.md`, and relevant repository changes.
+1. Read `PLAN.md`, root `RESULTS.md`, all existing `reviews/round-NNN/REVIEW.md` and `reviews/round-NNN/RESULTS.md` files, and relevant repository changes.
 2. Investigate the new information before editing.
 3. Update requirements, decisions, change map, tasks, traceability, and executor brief together so the contract remains consistent.
 4. Preserve useful history through version control rather than embedding a revision ledger.
@@ -169,16 +172,17 @@ Do not edit implementation files or rewrite execution history.
 
 ## Review implementation
 
-Treat review as a fresh check of the repository, not approval of `/ship`'s narrative.
+Treat review as a fresh check of the repository, not approval of `/ship`'s narrative. Every invocation owns one new immutable review round.
 
-1. Read `PLAN.md`, `RESULTS.md` when present, and the complete existing `REVIEW.md` when present.
-2. Freeze the acceptance boundary to the current objective, requirements, scope, acceptance criteria, and preserved behavior. Never add or broaden a requirement during review.
-3. On the first review, inspect the implementation changes and relevant surrounding code. A corrective finding must demonstrate a violation of the frozen acceptance boundary or a regression in an in-scope changed surface.
-4. On re-review, first reconcile every earlier open finding, then inspect the corrective changes and their named integration boundaries. Do not repeat a general repository audit. A new finding must be either a regression introduced by corrective work or a newly evidenced violation of the frozen acceptance boundary in the corrected integrated result.
-5. Check applicable tasks, change-map entries, integration gates, and claims in `RESULTS.md`, including whether the implementation reused appropriate existing mechanisms and kept proportional complexity for the contract.
-6. Rerun proportionate validation when feasible and state anything not run.
-7. Report findings ordered by severity with file and location evidence.
-8. Create `REVIEW.md` when the outcome is `Changes required`, or when a durable record is otherwise useful or requested. If it exists, reconcile earlier findings and append the current round.
+1. Read `PLAN.md`, root `RESULTS.md` when present, and every existing numbered review folder in order, including both `REVIEW.md` and `RESULTS.md` when present.
+2. Set the current round to one greater than the highest existing `reviews/round-NNN/` number, starting at `round-001`. Format `NNN` as a zero-padded three-digit number. Never reuse, overwrite, or skip an existing round number.
+3. Freeze the acceptance boundary to the current objective, requirements, scope, acceptance criteria, and preserved behavior. Never add or broaden a requirement during review.
+4. On the first review, inspect the implementation changes and relevant surrounding code. A corrective finding must demonstrate a violation of the frozen acceptance boundary or a regression in an in-scope changed surface.
+5. On re-review, first reconcile every earlier open finding, then inspect the corrective changes and their named integration boundaries. Do not repeat a general repository audit. A new finding must be either a regression introduced by corrective work or a newly evidenced violation of the frozen acceptance boundary in the corrected integrated result.
+6. Check applicable tasks, change-map entries, integration gates, root execution evidence, and round-scoped corrective evidence, including whether the implementation reused appropriate existing mechanisms and kept proportional complexity for the contract.
+7. Rerun proportionate validation when feasible and state anything not run.
+8. Report findings ordered by severity with file and location evidence.
+9. Create `reviews/round-NNN/` and write this round only to `reviews/round-NNN/REVIEW.md` for every outcome: `Pass`, `Changes required`, or `Blocked`.
 
 Treat unnecessary complexity as actionable only when it creates correctness, maintenance, contract, integration, or scope risk. Do not report subjective style preferences as findings.
 
@@ -186,11 +190,11 @@ An issue that does not violate the frozen acceptance boundary is an observation,
 
 ### Maintain review findings
 
-Give each durable actionable finding a stable identifier such as `R1-F1`. Do not assign IDs to observations or optional suggestions.
+Give each durable actionable finding a stable identifier derived from its folder number, such as `R1-F1` in `round-001` and `R2-F1` in `round-002`. Do not assign IDs to observations or optional suggestions.
 
 During re-review, mark a finding `Resolved` when verified, `Open` when it remains, and `Superseded` only when later contract or implementation changes make it inapplicable. Preserve the original finding and required correction. Add concise resolution evidence.
 
-Append a numbered review round containing its status and outcome, earlier findings checked, new findings, requirement and acceptance results, validation performed, validation omitted with reasons, and remaining risks.
+Each `REVIEW.md` contains that round's outcome, earlier findings checked, new findings, requirement and acceptance results, validation performed, validation omitted with reasons, and remaining risks. Never append a later round to an earlier file.
 
 Use one outcome:
 
@@ -202,22 +206,22 @@ Use one outcome:
 
 When the outcome is `Changes required`, automatically revise the execution instructions in `PLAN.md` in the same review operation. Do not wait for a separate `/spec update` request unless the convergence limit below applies.
 
-1. Persist the review round and its open findings in `REVIEW.md` before revising the contract.
+1. Persist the current round and its open findings in `reviews/round-NNN/REVIEW.md` before revising the contract.
 2. Convert every open in-bound finding into decision-complete corrective work mapped to existing requirements. If a correction cannot map to the frozen acceptance boundary, reclassify it as an observation or blocker instead of expanding the contract.
 3. Reconcile the executor brief, repository evidence, implementation decisions, change map, tasks, plan-wide validation, and risks. Do not change the objective, requirements, scope, preserved behavior, or acceptance criteria during review.
 4. Append dependency-ordered corrective tasks with new stable task IDs and cite the findings they address, such as `Addresses R1-F1 and R1-F3`. Do not repurpose completed task IDs or erase their contract history.
 5. Include regression coverage and validation that directly prove each correction. Do not delegate material design judgment to `/ship`.
-6. State that affected entries in `RESULTS.md` may be stale and that `/ship` must reconcile them against the repository.
+6. Direct `/ship` to record this correction cycle only in `reviews/round-NNN/RESULTS.md`. Root `RESULTS.md` remains the non-review execution record and must not receive this correction cycle.
 
 ### Enforce convergence
 
-Before automatically revising, count the immediately preceding consecutive review rounds whose outcome was `Changes required`. If there are already two consecutive `Changes required` rounds, set the current outcome to `Blocked`, preserve the findings, and ask the user whether to authorize another correction cycle, accept the remaining risk, or revise the product scope. Do not revise `PLAN.md` or emit the `/ship` handoff.
+Before automatically revising, count the immediately preceding numbered review folders whose outcome was `Changes required`. If there are already two consecutive `Changes required` rounds, set the current outcome to `Blocked`, preserve the findings in the newly created round folder, and ask the user whether to authorize another correction cycle, accept the remaining risk, or revise the product scope. Do not revise `PLAN.md` or emit the `/ship` handoff.
 
 A `Pass`, a new plan, an explicit user authorization for another correction cycle, or a user-authorized `/spec update` resets this count. Never evade the limit by renaming findings, opening a nominally new review sequence, or converting an out-of-scope observation into a requirement.
 
 Do not revise `PLAN.md` for `Pass`. For `Blocked`, record the blocker and ask the exact question needed to continue; do not manufacture corrective work.
 
-Report the outcome, findings ordered by severity, validation results, the updated plan path, and any blocker. When the outcome is `Changes required` and the revision is complete, end with this ready-to-copy prompt using the exact plan folder:
+Report the outcome, findings ordered by severity, validation results, the exact `reviews/round-NNN/REVIEW.md` path, the updated plan path, and any blocker. When the outcome is `Changes required` and the revision is complete, state that corrective evidence belongs in `reviews/round-NNN/RESULTS.md`, then end with this ready-to-copy prompt using the exact plan folder:
 
 ```bash
 /ship implement this plan: docs/plans/<plan>
