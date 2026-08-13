@@ -4,11 +4,11 @@
 
 Add an optional orchestration layer around Specship that can plan with the model and harness in the initiating conversation, execute one plan with one separately selected Ship model in an isolated Git worktree, and return the integrated result to a fresh Spec reviewer. The orchestration layer remains model- and harness-agnostic through explicit runner adapters.
 
-The existing `$spec` and `$ship` skills remain the protocol core. The plan folder remains the only required handoff between planning, execution, and review.
+The existing `/spec` and `/ship` skills remain the protocol core. The plan folder remains the only required handoff between planning, execution, and review.
 
 ## Goals
 
-- Preserve `$spec` as a planning and review role and `$ship` as the sole implementation role.
+- Preserve `/spec` as a planning and review role and `/ship` as the sole implementation role.
 - Let the initiating conversation's harness, model, and reasoning configuration act as the Spec profile.
 - Let the user select a different harness, provider, and model for Ship execution.
 - Support cross-harness combinations such as Codex Sol planning with Codex Luna shipping, or Claude Code planning with OpenCode shipping through OpenRouter.
@@ -28,7 +28,7 @@ The existing `$spec` and `$ship` skills remain the protocol core. The plan folde
 - A universal model benchmark or permanently ranked model catalog.
 - Moving provider-specific configuration or credentials into `PLAN.md`.
 - Replacing the native session, tool, or sandbox implementation of supported agent harnesses.
-- Folding process supervision into the `$spec` skill itself.
+- Folding process supervision into the `/spec` skill itself.
 
 ## Architecture
 
@@ -38,7 +38,7 @@ The feature is an optional orchestrator surrounding the existing two-skill proto
 initiating conversation
   |  inherits Spec harness/model/reasoning profile
   v
-$spec creates PLAN.md
+/spec creates PLAN.md
   |
   v
 model-free orchestrator
@@ -62,10 +62,10 @@ The orchestrator is deterministic application code, not another language model. 
 Expose one explicit entry point, conceptually:
 
 ```text
-$orchestrate [ship options] <request>
+/orchestrate [ship options] <request>
 ```
 
-The command captures the initiating Spec profile, asks `$spec` to create a decision-complete plan, resolves Ship configuration, and starts the run. Explicit Ship options bypass interactive selection after validation.
+The command captures the initiating Spec profile, asks `/spec` to create a decision-complete plan, resolves Ship configuration, and starts the run. Explicit Ship options bypass interactive selection after validation.
 
 Example configurations:
 
@@ -112,7 +112,7 @@ The first supported Ship adapters are Codex and OpenCode. Additional adapters mu
 The initiating harness supplies a Spec adapter capable of:
 
 - Recording the initiating model and reasoning profile without copying credentials.
-- Running initial `$spec` planning in the initiating conversation.
+- Running initial `/spec` planning in the initiating conversation.
 - Starting a fresh review session with the same Spec profile.
 - Passing only the plan, relevant diff, concise Ship results, and proportionate validation evidence to review.
 - Returning normalized review outcomes: `Pass`, `Changes required`, or `Blocked`.
@@ -172,7 +172,7 @@ Initial orchestration does not maintain a permanent quality ranking. Missing or 
 ## Execution and Review Flow
 
 1. Validate repository state and applicable instructions.
-2. Run `$spec <request>` in the initiating conversation.
+2. Run `/spec <request>` in the initiating conversation.
 3. Validate that the resulting plan is decision-complete and names one exact plan folder.
 4. Resolve and confirm one Ship harness/provider/model.
 5. Estimate or disclose pricing when the provider exposes it.
@@ -181,7 +181,7 @@ Initial orchestration does not maintain a permanent quality ranking. Missing or 
 8. Start one Ship session with the exact handoff prompt:
 
    ```text
-   $ship implement this plan: docs/plans/<plan>
+   /ship implement this plan: docs/plans/<plan>
    ```
 
 9. Monitor normalized events without feeding raw logs into the Spec conversation.
@@ -208,7 +208,7 @@ Review-driven correction attempts and transport retries are separate:
 - Fail before creating a worktree when the repository, plan, harness, provider, or model cannot be validated.
 - Preserve the worktree, branch, manifest, and available session identifiers after any post-creation failure.
 - Treat loss of a resumable Ship session as a blocker unless the user authorizes a fresh Ship session.
-- Reject review findings that broaden the sealed plan; route scope changes back to `$spec update` and the user.
+- Reject review findings that broaden the sealed plan; route scope changes back to `/spec update` and the user.
 - Detect incomplete or malformed harness event streams and report the raw log location without injecting the full log into Spec context.
 - Never report `Pass` solely from the Ship model's narrative; require the configured review and validation evidence.
 
@@ -248,7 +248,7 @@ Run the same fixture suite against Codex and OpenCode adapters:
 - Detect installed, missing, authenticated, and unauthenticated states.
 - Enumerate and validate a model.
 - Start in the exact worktree.
-- Load and follow the `$ship` skill.
+- Load and follow the `/ship` skill.
 - Resume the same session with findings.
 - Surface an approval request.
 - Interrupt and recover session state.
@@ -285,7 +285,7 @@ Provider-dependent tests use mocks by default and opt-in live smoke tests to avo
 - Review findings return to the same Ship session for no more than two correction attempts.
 - The orchestrator never merges, pushes, deploys, or deletes work automatically.
 - The final report distinguishes Spec, Ship, and review usage and identifies the branch and required next action.
-- Existing `$spec`, `$ship`, and plan-folder ownership semantics remain valid when orchestration is not used.
+- Existing `/spec`, `/ship`, and plan-folder ownership semantics remain valid when orchestration is not used.
 
 ## Delivery Boundary
 

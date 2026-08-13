@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Implement or resume one complete $spec execution contract from an explicit docs/plans folder, validate every mapped requirement, and record concise evidence in RESULTS.md without changing the plan or inventing decisions. Use when the user invokes $ship with a plan folder and wants direct, bounded execution by any compatible coding agent.
+description: Implement or resume one complete /spec execution contract from an explicit docs/plans folder, validate every mapped requirement, and record concise evidence in RESULTS.md without changing the plan or inventing decisions. Use when the user invokes /ship with a plan folder and wants direct, bounded execution by any compatible coding agent.
 ---
 
 # Ship
@@ -14,7 +14,7 @@ Treat `PLAN.md` and the repository as the source of truth. Do not depend on the 
 Use this invocation:
 
 ```text
-$ship implement this plan: docs/plans/<plan>
+/ship implement this plan: docs/plans/<plan>
 ```
 
 Require an explicit folder. Never guess the newest plan, combine plans, or reduce the execution boundary to one selected task.
@@ -26,7 +26,7 @@ Require an explicit folder. Never guess the newest plan, combine plans, or reduc
 - Stop when a missing decision could materially change behavior, architecture, compatibility, data handling, security, rollout, or acceptance criteria.
 - Preserve unrelated user changes and avoid unrelated cleanup.
 - Follow applicable repository instruction files, including documentation and task-tracking rules.
-- Do not perform `$spec` review behavior.
+- Do not perform `/spec` review behavior.
 
 ## Orient once, then execute
 
@@ -65,7 +65,7 @@ When blocked:
 
 1. Preserve safe partial work.
 2. Append a `RESULTS.md` entry with the task, requirement IDs, observed evidence, partial changes, validation, and one exact blocking question.
-3. Tell the user to return to `$spec update docs/plans/<plan>`.
+3. Tell the user to return to `/spec update docs/plans/<plan>`.
 
 ## Execute task by task
 
@@ -144,4 +144,10 @@ Use this summary shape:
 - **Remaining risks**: None, or bounded risks.
 ```
 
-Report the outcome, files changed, validation, and required follow-up. Offer the optional handoff: `$spec review docs/plans/<plan>`.
+Report the outcome, files changed, validation, and required follow-up. Always end an `Implemented` result with this ready-to-copy command using the exact active plan folder:
+
+```text
+/spec review docs/plans/<plan>
+```
+
+Do not omit the command because independent review is optional. For a `Blocked` or `Failed` result, report the required recovery step instead.

@@ -1,7 +1,7 @@
 interface:
   display_name: "Ship"
   short_description: "Execute one complete bounded plan"
-  default_prompt: "Use $ship to implement or resume this complete execution contract directly, validate every mapped requirement, and record concise evidence in RESULTS.md: docs/plans/plan-name."
+  default_prompt: "Use /ship to implement or resume this complete execution contract directly, validate every mapped requirement, and record concise evidence in RESULTS.md: docs/plans/plan-name."
 
 policy:
   allow_implicit_invocation: false

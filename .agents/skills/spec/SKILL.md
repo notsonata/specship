@@ -1,6 +1,6 @@
 ---
 name: spec
-description: Investigate a software repository and create, update, or independently review a decision-complete implementation contract under docs/plans without implementing source changes. Use when the user invokes $spec to prepare an exact handoff for a separate execution agent, including agents with less reasoning capacity, or to review work completed from that contract.
+description: Investigate a software repository and create, update, or independently review a decision-complete implementation contract under docs/plans without implementing source changes. Use when the user invokes /spec to prepare an exact handoff for a separate execution agent, including agents with less reasoning capacity, or to review work completed from that contract.
 ---
 
 # Spec
@@ -9,9 +9,9 @@ Act as the planning and review agent. Turn the user's request and verified repos
 
 ## Choose the operation
 
-- `$spec <request>`: create a plan.
-- `$spec update docs/plans/<plan> [new information]`: update an existing plan.
-- `$spec review docs/plans/<plan>`: review the implementation against the plan.
+- `/spec <request>`: create a plan.
+- `/spec update docs/plans/<plan> [new information]`: update an existing plan.
+- `/spec review docs/plans/<plan>`: review the implementation against the plan.
 
 Require the exact folder before updating or reviewing. Never guess or silently replace a plan folder.
 
@@ -20,12 +20,12 @@ Require the exact folder before updating or reviewing. Never guess or silently r
 Store each plan at `docs/plans/<plain-kebab-case-slug>/`:
 
 ```text
-PLAN.md       # immutable execution contract owned by $spec
-RESULTS.md    # execution log created by $ship
-REVIEW.md     # optional review record created by $spec review
+PLAN.md       # immutable execution contract owned by /spec
+RESULTS.md    # execution log created by /ship
+REVIEW.md     # optional review record created by /spec review
 ```
 
-Do not create `RESULTS.md` or `REVIEW.md` during initial planning. Do not edit `RESULTS.md`. Do not edit `PLAN.md` while `$ship` is executing it.
+Do not create `RESULTS.md` or `REVIEW.md` during initial planning. Do not edit `RESULTS.md`. Do not edit `PLAN.md` while `/ship` is executing it.
 
 ## Create a plan
 
@@ -46,7 +46,7 @@ Do not ask for facts the repository can answer. Do not write an executable plan 
 
 Select one implementation approach. Resolve naming, ownership, data flow, error behavior, compatibility, and testing strategy when relevant. Prefer extending a sound existing mechanism over creating a duplicate path. Require every new abstraction or layer to be justified by a current requirement, real variation, or an established repository boundary. Record alternatives only when the rejection explains an important constraint.
 
-The plan must not tell `$ship` to choose an approach, investigate what should happen, decide between options, or fill in product behavior. If repository evidence is insufficient, ask the user or label a narrow operational assumption that cannot change observable behavior.
+The plan must not tell `/ship` to choose an approach, investigate what should happen, decide between options, or fill in product behavior. If repository evidence is insufficient, ask the user or label a narrow operational assumption that cannot change observable behavior.
 
 ### Write one decision-complete `PLAN.md`
 
@@ -152,9 +152,9 @@ Before handing off, verify all of the following:
 - integration gates exist only at meaningful boundaries and name actual implementation or behavior to inspect;
 - preserved behavior and non-goals are explicit;
 - the executor can start from `Executor brief` without broad repository discovery;
-- no task delegates material product or architecture judgment to `$ship`.
+- no task delegates material product or architecture judgment to `/ship`.
 
-End with the folder and exact handoff: `$ship implement this plan: docs/plans/<plan>`.
+End with the folder and exact handoff: `/ship implement this plan: docs/plans/<plan>`.
 
 ## Update a plan
 
@@ -163,13 +163,13 @@ End with the folder and exact handoff: `$ship implement this plan: docs/plans/<p
 3. Update requirements, decisions, change map, tasks, traceability, and executor brief together so the contract remains consistent.
 4. Preserve useful history through version control rather than embedding a revision ledger.
 5. Reference applicable review finding IDs in corrective tasks, such as `Addresses R2-F1 and R2-F3`.
-6. If execution began, report that prior result entries may be stale and `$ship` must reconcile them against the repository.
+6. If execution began, report that prior result entries may be stale and `/ship` must reconcile them against the repository.
 
 Do not edit implementation files or rewrite execution history.
 
 ## Review implementation
 
-Treat review as a fresh check of the repository, not approval of `$ship`'s narrative.
+Treat review as a fresh check of the repository, not approval of `/ship`'s narrative.
 
 1. Read `PLAN.md`, `RESULTS.md` when present, and the complete existing `REVIEW.md` when present.
 2. Freeze the acceptance boundary to the current objective, requirements, scope, acceptance criteria, and preserved behavior. Never add or broaden a requirement during review.
@@ -182,7 +182,7 @@ Treat review as a fresh check of the repository, not approval of `$ship`'s narra
 
 Treat unnecessary complexity as actionable only when it creates correctness, maintenance, contract, integration, or scope risk. Do not report subjective style preferences as findings.
 
-An issue that does not violate the frozen acceptance boundary is an observation, not a finding. Do not assign it a finding ID, add corrective work, or let it prevent `Pass`. If it would require new product behavior, architecture, scope, or acceptance criteria, tell the user they may request `$spec update`; do not silently turn it into contract work. Use `Blocked` only when a missing decision or evidence prevents judging the existing contract.
+An issue that does not violate the frozen acceptance boundary is an observation, not a finding. Do not assign it a finding ID, add corrective work, or let it prevent `Pass`. If it would require new product behavior, architecture, scope, or acceptance criteria, tell the user they may request `/spec update`; do not silently turn it into contract work. Use `Blocked` only when a missing decision or evidence prevents judging the existing contract.
 
 ### Maintain review findings
 
@@ -200,29 +200,29 @@ Use one outcome:
 
 ### Revise the contract after failed review
 
-When the outcome is `Changes required`, automatically revise the execution instructions in `PLAN.md` in the same review operation. Do not wait for a separate `$spec update` request unless the convergence limit below applies.
+When the outcome is `Changes required`, automatically revise the execution instructions in `PLAN.md` in the same review operation. Do not wait for a separate `/spec update` request unless the convergence limit below applies.
 
 1. Persist the review round and its open findings in `REVIEW.md` before revising the contract.
 2. Convert every open in-bound finding into decision-complete corrective work mapped to existing requirements. If a correction cannot map to the frozen acceptance boundary, reclassify it as an observation or blocker instead of expanding the contract.
 3. Reconcile the executor brief, repository evidence, implementation decisions, change map, tasks, plan-wide validation, and risks. Do not change the objective, requirements, scope, preserved behavior, or acceptance criteria during review.
 4. Append dependency-ordered corrective tasks with new stable task IDs and cite the findings they address, such as `Addresses R1-F1 and R1-F3`. Do not repurpose completed task IDs or erase their contract history.
-5. Include regression coverage and validation that directly prove each correction. Do not delegate material design judgment to `$ship`.
-6. State that affected entries in `RESULTS.md` may be stale and that `$ship` must reconcile them against the repository.
+5. Include regression coverage and validation that directly prove each correction. Do not delegate material design judgment to `/ship`.
+6. State that affected entries in `RESULTS.md` may be stale and that `/ship` must reconcile them against the repository.
 
 ### Enforce convergence
 
-Before automatically revising, count the immediately preceding consecutive review rounds whose outcome was `Changes required`. If there are already two consecutive `Changes required` rounds, set the current outcome to `Blocked`, preserve the findings, and ask the user whether to authorize another correction cycle, accept the remaining risk, or revise the product scope. Do not revise `PLAN.md` or emit the `$ship` handoff.
+Before automatically revising, count the immediately preceding consecutive review rounds whose outcome was `Changes required`. If there are already two consecutive `Changes required` rounds, set the current outcome to `Blocked`, preserve the findings, and ask the user whether to authorize another correction cycle, accept the remaining risk, or revise the product scope. Do not revise `PLAN.md` or emit the `/ship` handoff.
 
-A `Pass`, a new plan, an explicit user authorization for another correction cycle, or a user-authorized `$spec update` resets this count. Never evade the limit by renaming findings, opening a nominally new review sequence, or converting an out-of-scope observation into a requirement.
+A `Pass`, a new plan, an explicit user authorization for another correction cycle, or a user-authorized `/spec update` resets this count. Never evade the limit by renaming findings, opening a nominally new review sequence, or converting an out-of-scope observation into a requirement.
 
 Do not revise `PLAN.md` for `Pass`. For `Blocked`, record the blocker and ask the exact question needed to continue; do not manufacture corrective work.
 
 Report the outcome, findings ordered by severity, validation results, the updated plan path, and any blocker. When the outcome is `Changes required` and the revision is complete, end with this ready-to-copy prompt using the exact plan folder:
 
 ```bash
-$ship implement this plan: docs/plans/<plan>
+/ship implement this plan: docs/plans/<plan>
 ```
 
-The prompt is for the existing `$ship` session when available. Never start or imply concurrent `$ship` executions for the same plan.
+The prompt is for the existing `/ship` session when available. Never start or imply concurrent `/ship` executions for the same plan.
 
 Do not add a separate finalization workflow. Follow the target repository's instructions for canonical documentation during normal implementation.
