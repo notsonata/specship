@@ -114,6 +114,10 @@ Review produces one of three outcomes:
 
 A durable `REVIEW.md` is created whenever changes are required, and otherwise when useful or requested. Findings receive stable IDs so later reviews can resolve earlier issues without erasing their history.
 
+Review does not expand the product contract. A corrective finding must violate an existing requirement, acceptance criterion, scope boundary, or preserved behavior. Issues requiring new behavior are reported as out-of-scope observations and do not prevent a passing contract review.
+
+Re-review verifies earlier findings and the corrective changes without starting another unrestricted audit. A new finding must be either a regression introduced by the corrections or a newly evidenced violation of the frozen contract in the corrected integrated result.
+
 After a `Changes required` review, `$spec` reports the findings and validation, identifies the revised plan, and ends with the exact prompt to send to the existing execution session:
 
 ```bash
@@ -153,7 +157,9 @@ An update is appropriate when:
 
 `$spec update` rewrites every affected part of `PLAN.md` so it remains internally consistent and self-contained. Existing execution evidence is preserved; `$ship` reconciles stale entries when it resumes.
 
-For a `Changes required` review, no separate update command is needed. The review itself appends new stable corrective tasks, references every open finding ID, updates requirement traceability and validation, and marks affected execution evidence as potentially stale.
+For a `Changes required` review, no separate update command is normally needed. The review appends new stable corrective tasks mapped to existing requirements, references every open finding ID, updates validation, and marks affected execution evidence as potentially stale. It never adds requirements or broadens scope.
+
+After two consecutive `Changes required` rounds, automatic correction stops. If another review still finds in-scope defects, `$spec` reports `Blocked` and asks the user whether to authorize another correction cycle, accept the remaining risk, or revise product scope. It does not update the plan or emit another `$ship` prompt until the user decides.
 
 After review:
 
@@ -161,6 +167,7 @@ After review:
 | --- | --- |
 | The implementation is correct | Finish. |
 | Review finds correctable implementation defects | `$spec review` revises the plan automatically; run `$ship` again, then review again. |
+| Two consecutive correction rounds did not converge | Stop automatic revision and ask the user how to proceed. |
 | Evidence, access, or a decision is missing | Resolve the blocker before continuing. |
 
 ## Safety and scope

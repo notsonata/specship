@@ -172,15 +172,17 @@ Do not edit implementation files or rewrite execution history.
 Treat review as a fresh check of the repository, not approval of `$ship`'s narrative.
 
 1. Read `PLAN.md`, `RESULTS.md` when present, and the complete existing `REVIEW.md` when present.
-2. Inspect implementation changes and relevant surrounding code.
-3. Recheck every unresolved finding from earlier rounds before searching for new issues.
-4. Check every requirement, task, acceptance criterion, preserved behavior, regression risk, change-map entry, integration gate, and claim in `RESULTS.md`.
-5. Check whether the implementation reused appropriate existing mechanisms, covered the affected surfaces, avoided duplicate paths, and kept proportional complexity for the requirements and repository architecture.
+2. Freeze the acceptance boundary to the current objective, requirements, scope, acceptance criteria, and preserved behavior. Never add or broaden a requirement during review.
+3. On the first review, inspect the implementation changes and relevant surrounding code. A corrective finding must demonstrate a violation of the frozen acceptance boundary or a regression in an in-scope changed surface.
+4. On re-review, first reconcile every earlier open finding, then inspect the corrective changes and their named integration boundaries. Do not repeat a general repository audit. A new finding must be either a regression introduced by corrective work or a newly evidenced violation of the frozen acceptance boundary in the corrected integrated result.
+5. Check applicable tasks, change-map entries, integration gates, and claims in `RESULTS.md`, including whether the implementation reused appropriate existing mechanisms and kept proportional complexity for the contract.
 6. Rerun proportionate validation when feasible and state anything not run.
 7. Report findings ordered by severity with file and location evidence.
 8. Create `REVIEW.md` when the outcome is `Changes required`, or when a durable record is otherwise useful or requested. If it exists, reconcile earlier findings and append the current round.
 
 Treat unnecessary complexity as actionable only when it creates correctness, maintenance, contract, integration, or scope risk. Do not report subjective style preferences as findings.
+
+An issue that does not violate the frozen acceptance boundary is an observation, not a finding. Do not assign it a finding ID, add corrective work, or let it prevent `Pass`. If it would require new product behavior, architecture, scope, or acceptance criteria, tell the user they may request `$spec update`; do not silently turn it into contract work. Use `Blocked` only when a missing decision or evidence prevents judging the existing contract.
 
 ### Maintain review findings
 
@@ -192,20 +194,26 @@ Append a numbered review round containing its status and outcome, earlier findin
 
 Use one outcome:
 
-- `Changes required`: one or more findings require implementation changes.
+- `Changes required`: one or more in-bound findings require implementation changes.
 - `Blocked`: required evidence, access, or a material decision is missing.
-- `Pass`: all earlier findings are resolved or superseded, no corrective finding remains, and checked requirements pass.
+- `Pass`: all earlier findings are resolved or superseded, no in-bound corrective finding remains, and checked requirements pass. Out-of-scope observations do not prevent `Pass`.
 
 ### Revise the contract after failed review
 
-When the outcome is `Changes required`, automatically revise `PLAN.md` in the same review operation. Do not wait for a separate `$spec update` request.
+When the outcome is `Changes required`, automatically revise the execution instructions in `PLAN.md` in the same review operation. Do not wait for a separate `$spec update` request unless the convergence limit below applies.
 
 1. Persist the review round and its open findings in `REVIEW.md` before revising the contract.
-2. Convert every open finding into decision-complete corrective work. Reconcile the executor brief, requirements, scope, repository evidence, implementation decisions, change map, tasks, plan-wide validation, and risks together.
-3. Reuse an existing requirement when the finding shows that requirement was not satisfied. Add a requirement only when the correction clarifies testable behavior absent from the current contract.
+2. Convert every open in-bound finding into decision-complete corrective work mapped to existing requirements. If a correction cannot map to the frozen acceptance boundary, reclassify it as an observation or blocker instead of expanding the contract.
+3. Reconcile the executor brief, repository evidence, implementation decisions, change map, tasks, plan-wide validation, and risks. Do not change the objective, requirements, scope, preserved behavior, or acceptance criteria during review.
 4. Append dependency-ordered corrective tasks with new stable task IDs and cite the findings they address, such as `Addresses R1-F1 and R1-F3`. Do not repurpose completed task IDs or erase their contract history.
 5. Include regression coverage and validation that directly prove each correction. Do not delegate material design judgment to `$ship`.
 6. State that affected entries in `RESULTS.md` may be stale and that `$ship` must reconcile them against the repository.
+
+### Enforce convergence
+
+Before automatically revising, count the immediately preceding consecutive review rounds whose outcome was `Changes required`. If there are already two consecutive `Changes required` rounds, set the current outcome to `Blocked`, preserve the findings, and ask the user whether to authorize another correction cycle, accept the remaining risk, or revise the product scope. Do not revise `PLAN.md` or emit the `$ship` handoff.
+
+A `Pass`, a new plan, an explicit user authorization for another correction cycle, or a user-authorized `$spec update` resets this count. Never evade the limit by renaming findings, opening a nominally new review sequence, or converting an out-of-scope observation into a requirement.
 
 Do not revise `PLAN.md` for `Pass`. For `Blocked`, record the blocker and ask the exact question needed to continue; do not manufacture corrective work.
 
