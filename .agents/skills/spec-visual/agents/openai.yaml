@@ -1,0 +1,7 @@
+interface:
+  display_name: "Spec Visual"
+  short_description: "Create spec contracts with visual review surfaces"
+  default_prompt: "Use $spec-visual to create a decision-complete Specship contract with an appropriate visual review surface."
+
+policy:
+  allow_implicit_invocation: false

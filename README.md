@@ -2,9 +2,10 @@
 
 Turn an ambiguous coding request into a precise implementation contract, execute the complete contract with one executor, and independently review the result.
 
-Specship provides two portable Agent Skills:
+Specship provides three portable Agent Skills:
 
 - **spec** investigates a repository and writes or reviews a decision-complete contract.
+- **spec-visual** follows the same contract protocol while adding a grounded visual review surface for plans.
 - **ship** implements one complete contract, validates every mapped requirement, and records concise evidence.
 
 The plan folder is the handoff. Planning, implementation, and review can happen in separate sessions, agents, or model providers without relying on shared chat history.
@@ -20,6 +21,7 @@ Specship separates those responsibilities:
 | Skill | Responsibility | Boundary |
 | --- | --- | --- |
 | spec | Investigate, resolve ambiguity, select an approach, and define observable success. | Never implements source changes. |
+| spec-visual | Do everything `spec` does and publish diagrams, file maps, wireframes, prototypes, or structured review blocks when they help. | Visual artifacts supplement `PLAN.md`; it never implements source changes. |
 | ship | Execute every task in one explicit plan and prove the mapped requirements. | Never edits the plan or invents product or architecture decisions. |
 
 The result is a concrete execution contract with exact files and symbols, dependency-ordered tasks, preserved behavior, testable requirements, and proportionate validation commands.
@@ -32,11 +34,11 @@ Use the syntax native to your agent host:
 
 | Host | Plan or review | Implement |
 | --- | --- | --- |
-| Codex | `$spec ...` | `$ship ...` |
-| Slash-command hosts | `/spec ...` | `/ship ...` |
-| Other Agent Skills hosts | Select or invoke the installed `spec` or `ship` skill using the host's skill interface. | Same. |
+| Codex | `$spec ...` or `$spec-visual ...` | `$ship ...` |
+| Slash-command hosts | `/spec ...` or `/spec-visual ...` | `/ship ...` |
+| Other Agent Skills hosts | Select or invoke the installed `spec`, `spec-visual`, or `ship` skill using the host's skill interface. | Same. |
 
-Examples in the workflow below use slash-command syntax as protocol notation. In Codex, replace `/spec` with `$spec` and `/ship` with `$ship`. Each skill returns ready-to-copy handoffs in the active host's native syntax.
+Examples in the workflow below use slash-command syntax as protocol notation. In Codex, replace `/spec` with `$spec`, `/spec-visual` with `$spec-visual`, and `/ship` with `$ship`. Each skill returns ready-to-copy handoffs in the active host's native syntax.
 
 ## How it works
 
@@ -69,6 +71,14 @@ Start a planning session and describe the outcome you want:
 ```text
 /spec Add organization switching to the account settings flow.
 ```
+
+For UI-heavy, architecture-heavy, risky, or otherwise important work that benefits from visual approval, use the companion planner:
+
+```text
+/spec-visual Add organization switching to the account settings flow.
+```
+
+`spec-visual` keeps `docs/plans/<plan>/PLAN.md` as the exact executor contract and adds a hosted or local Agent-Native visual review surface. The visual artifact is supplementary, so `$ship` can execute the same plan even when the visual viewer is unavailable later.
 
 `spec` reads repository instructions and relevant documentation, inspects the affected implementation and tests, resolves material decisions, and writes one self-contained `PLAN.md`.
 
@@ -159,6 +169,10 @@ Each request gets one plain kebab-case folder:
 docs/plans/<plan>/
 ├── PLAN.md                       # revisioned contract owned by spec
 ├── RESULTS.md                    # non-review execution evidence owned by ship
+├── visual/                       # optional local MDX source owned by spec-visual
+│   ├── plan.mdx
+│   ├── canvas.mdx                # optional
+│   └── prototype.mdx             # optional
 └── reviews/
     ├── round-001/
     │   ├── REVIEW.md             # immutable review owned by spec
@@ -214,10 +228,19 @@ Specship is intentionally strict about ownership:
 - Node.js 18 or newer for `npx skills`
 - A coding agent that supports the open Agent Skills format
 
+### Visual planning setup
+
+The repository-local `spec-visual` skill is included; visual rendering needs an Agent-Native Plans surface as well:
+
+- **Hosted plans:** install and authenticate the connector once for Codex with `npx -y @agent-native/core@latest skills add visual-plan --client codex`, then start a new Codex task so the `plan` tools load. If it is already registered, reconnect with `npx -y @agent-native/core@latest reconnect https://plan.agent-native.com --client codex`.
+- **Local/private plans:** use `AGENT_NATIVE_PLANS_MODE=local-files` and the Agent-Native CLI's `plan local check`, `plan local serve`, and `plan local verify` commands against `docs/plans/<plan>/visual/`. No hosted Plan authentication is required. Use a Chromium-based browser for the local bridge.
+
+The visual connector/CLI is optional for ordinary `$spec` and `$ship` workflows.
+
 ### Install globally
 
 ```bash
-npx skills add notsonata/specship --skill spec --skill ship --global --yes
+npx skills add notsonata/specship --skill spec --skill spec-visual --skill ship --global --yes
 ```
 
 Use `--agent <agent-id>` to select a target explicitly. Repeat the flag to install into multiple agents. Restart an agent if the new skills do not appear immediately. A host that does not support global skill installation may be reported separately while supported hosts still install successfully.
@@ -227,7 +250,7 @@ Use `--agent <agent-id>` to select a target explicitly. Repeat the flag to insta
 Run the same command from the target repository without `--global`:
 
 ```bash
-npx skills add notsonata/specship --skill spec --skill ship --yes
+npx skills add notsonata/specship --skill spec --skill spec-visual --skill ship --yes
 ```
 
 ### Install from a local clone
@@ -235,16 +258,17 @@ npx skills add notsonata/specship --skill spec --skill ship --yes
 ```bash
 git clone https://github.com/notsonata/specship.git
 cd specship
-npx skills add . --skill spec --skill ship --global --yes
+npx skills add . --skill spec --skill spec-visual --skill ship --global --yes
 ```
 
 ## Quick reference
 
-The examples use slash-command syntax. Codex users should use `$spec` and `$ship`.
+The examples use slash-command syntax. Codex users should use `$spec`, `$spec-visual`, and `$ship`.
 
 | Goal | Command |
 | --- | --- |
 | Plan a new request | `/spec <request>` |
+| Plan with visual review | `/spec-visual <request>` |
 | Implement a plan | `/ship implement this plan: docs/plans/<plan>` |
 | Update a plan | `/spec update docs/plans/<plan> <new information>` |
 | Review an implementation | `/spec review docs/plans/<plan>` |
