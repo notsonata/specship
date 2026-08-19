@@ -80,7 +80,7 @@ For UI-heavy, architecture-heavy, risky, or otherwise important work that benefi
 
 `spec-visual` keeps `docs/plans/<plan>/PLAN.md` as the exact executor contract and adds a hosted or local Agent-Native visual review surface. The visual artifact is supplementary, so `$ship` can execute the same plan even when the visual viewer is unavailable later.
 
-Both planning skills invoke the existing `grilling` skill whenever a material decision, ambiguous finding, or unclear visual comment remains. They invoke the existing `grill-with-docs` dispatcher for repository terminology or documentation conflicts. These are host-provided integrations, not Specship skill copies; if the required skill is unavailable, planning reports `Blocked` instead of assuming.
+Both planning skills include a built-in decision interview whenever a material decision, ambiguous finding, terminology conflict, or unclear visual comment remains. The interview maps a design tree, asks the settled frontier in rounds with recommended answers, resolves facts from the repository, waits for user confirmation, and records the result in the existing plan and visual artifacts. No additional skill is required or installed.
 
 `spec` reads repository instructions and relevant documentation, inspects the affected implementation and tests, resolves material decisions, and writes one self-contained `PLAN.md`.
 
@@ -229,7 +229,6 @@ Specship is intentionally strict about ownership:
 - Git
 - Node.js 18 or newer for `npx skills`
 - A coding agent that supports the open Agent Skills format
-- The host's existing `grilling` skill for unresolved decisions; `grill-with-docs` is additionally used for documentation and terminology conflicts.
 
 ### Visual planning setup
 
