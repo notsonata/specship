@@ -10,7 +10,7 @@ Specship provides three portable Agent Skills:
 
 The plan folder is the handoff. Planning, implementation, and review can happen in separate sessions, agents, or model providers without relying on shared chat history.
 
-> **Status:** Specship v0.8 is a public source preview. It is being dogfooded and is not yet presented as production-ready.
+> **Status:** Specship v0.9 is a public source preview. It is being dogfooded and is not yet presented as production-ready.
 
 ## Why use Specship?
 
@@ -81,6 +81,8 @@ For UI-heavy, architecture-heavy, risky, or otherwise important work that benefi
 `spec-visual` keeps `docs/plans/<plan>/PLAN.md` as the exact executor contract and adds a hosted or local Agent-Native visual review surface. The visual artifact is supplementary, so `$ship` can execute the same plan even when the visual viewer is unavailable later.
 
 Both planning skills include a built-in decision interview whenever a material decision, ambiguous finding, terminology conflict, or unclear visual comment remains. The interview maps a design tree, asks the settled frontier in rounds with recommended answers, resolves facts from the repository, waits for user confirmation, and records the result in the existing plan and visual artifacts. No additional skill is required or installed.
+
+When explicitly prompted to split a large plan, either planner first returns a dependency-aware phase map, then creates one complete `PLAN.md` and (for `spec-visual`) one matching visual artifact per independently shippable phase. Each phase has its own observable outcome, requirements, dependencies, validation, and deferred scope; the planners do not split by file layer alone or invent a phase boundary without confirmation.
 
 `spec` reads repository instructions and relevant documentation, inspects the affected implementation and tests, resolves material decisions, and writes one self-contained `PLAN.md`.
 

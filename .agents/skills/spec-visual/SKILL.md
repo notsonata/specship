@@ -1,6 +1,6 @@
 ---
 name: spec-visual
-description: Investigate a software repository and create, update, or independently review the same decision-complete Specship implementation contract as spec, while publishing a grounded visual review surface with diagrams, file maps, wireframes, prototypes, API/schema blocks, and reviewer questions when useful. Use when the user explicitly invokes spec-visual for UI-heavy, architecture-heavy, risky, ambiguous, or otherwise important planning that should be reviewed visually before source changes.
+description: Investigate a software repository and create, update, independently review, or explicitly decompose the same decision-complete Specship implementation contract as spec, while publishing a grounded visual review surface. Use when the user explicitly invokes spec-visual for UI-heavy, architecture-heavy, risky, ambiguous, phase-splitting, or otherwise important planning that should be reviewed visually before source changes.
 ---
 
 # Spec Visual
@@ -80,6 +80,17 @@ Use this exact question shape:
 ```
 
 For terminology or documentation conflicts, show the repository evidence, ask which meaning governs, and record the confirmed term or decision in the existing Specship contract and visual sections. Do not invent a second docs/ADR system. If the user does not settle a material decision, report `Blocked` rather than guessing. Capture confirmed answers in the contract, visual blocks, open questions, risks, and validation.
+
+### Split an oversized plan into phases
+
+Activate this mode only when the user explicitly asks to split, phase, decompose, or sequence a large plan. Do not split merely because a plan has many tasks.
+
+1. Read the complete contract and visual source, inventory every requirement, and preserve all requirements while proposing phases.
+2. Map dependencies between requirements, affected surfaces, migrations, integration gates, and visual review needs. A phase boundary must be based on an independently observable outcome and stable dependency contract, not on “frontend,” “backend,” or file ownership alone.
+3. Propose the smallest useful number of phases. For each phase, name its objective, included and deferred requirements, prerequisites, exact files and symbols, compatibility or migration obligations, validation, acceptance gate, and visual review surface. No phase may depend on behavior that a later phase is supposed to add.
+4. Run the ambiguity interview for any boundary that changes scope, sequencing, rollout, data shape, compatibility, acceptance, or visual fidelity. Ask the user to settle the boundary before creating phase artifacts; never invent a phase count or hidden ordering decision.
+5. Once boundaries are confirmed, create one self-contained `PLAN.md` and matching visual artifact per phase, using stable IDs such as `phase-01`, `phase-02`, and dependency-ordered slugs. Each phase must be executable by `$ship` without the original chat. Keep visual blocks limited to that phase's scope and put deferred work in explicit later-phase scope.
+6. Return a phase map showing `Phase`, observable outcome, requirements, dependencies, plan folder, visual artifact, and validation gate. If the user asked only for analysis, return the map without creating plan or visual artifacts. Do not turn the original plan into a non-executable roadmap unless the user explicitly asks for that conversion.
 
 ### Readiness checks
 

@@ -1,6 +1,6 @@
 ---
 name: spec
-description: Investigate a software repository and create, update, or independently review a decision-complete implementation contract under docs/plans without implementing source changes. Use when the user explicitly invokes the spec skill to prepare an exact handoff for a separate execution agent, including agents with less reasoning capacity, or to review work completed from that contract.
+description: Investigate a software repository and create, update, independently review, or explicitly decompose a decision-complete implementation contract under docs/plans without implementing source changes. Use when the user explicitly invokes the spec skill to prepare an exact handoff, split an oversized plan into independently shippable phases, or review work completed from that contract.
 ---
 
 # Spec
@@ -173,6 +173,17 @@ Avoid vague instructions such as “update the logic,” “handle edge cases,�
 Specify validation from narrow to broad. Require a full repository suite only for cross-cutting or high-risk changes, repository rules, or an explicit user request. Do not use test count as a planning target.
 
 Keep one plan small enough for one execution session. Split a large program into independently useful plan folders rather than compressing decisions or creating an unbounded task.
+
+### Split an oversized plan into phases
+
+Activate this mode only when the user explicitly asks to split, phase, decompose, or sequence a large plan. Do not split merely because a plan has many tasks.
+
+1. Read the complete current contract and build a requirement inventory. Do not drop, merge, or reinterpret requirements while proposing phases.
+2. Map dependencies between requirements, affected surfaces, migrations, and integration gates. A phase boundary must be based on an independently observable outcome and a stable dependency contract, not on “frontend,” “backend,” or file ownership alone.
+3. Propose the smallest useful number of phases. For each phase, name its objective, included and deferred requirements, prerequisites, exact files and symbols, compatibility or migration obligations, validation, and acceptance gate. No phase may depend on behavior that a later phase is supposed to add.
+4. Run the ambiguity interview for any boundary that changes scope, sequencing, rollout, data shape, compatibility, or acceptance. Ask the user to settle the boundary before writing phase plans; never invent a phase count or make a hidden ordering decision.
+5. Once boundaries are confirmed, create one self-contained plan folder containing `PLAN.md` per phase, using stable IDs such as `phase-01`, `phase-02`, and dependency-ordered slugs. Each phase plan must satisfy the full contract shape and be executable by `$ship` without the original chat. Put deferred work in explicit later-phase scope, never in vague “follow-up” language.
+6. Return a phase map showing `Phase`, observable outcome, requirements, dependencies, plan folder, and validation gate. If the user asked only for analysis, return the map without creating plan artifacts. Do not turn the original plan into a non-executable roadmap unless the user explicitly asks for that conversion.
 
 ### Check readiness
 
