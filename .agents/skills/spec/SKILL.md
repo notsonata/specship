@@ -61,6 +61,17 @@ Select one implementation approach. Resolve naming, ownership, data flow, error 
 
 The plan must not tell `/ship` to choose an approach, investigate what should happen, decide between options, or fill in product behavior. If repository evidence is insufficient, ask the user or label a narrow operational assumption that cannot change observable behavior.
 
+### Ambiguity gate: invoke grilling before assuming
+
+Do not convert an unresolved material question into an assumption. After repository research and before sealing a plan or review result, classify each uncertainty:
+
+- **Fact** — inspect the repository, tools, tests, schemas, or docs and resolve it yourself.
+- **Material decision** — invoke the existing `grilling` skill and wait for its design-tree interview to reach a user-confirmed shared understanding.
+- **Vocabulary or documentation conflict** — invoke the existing `grill-with-docs` skill so its `grilling` and `domain-modeling` dispatches handle the repository terminology and requested documentation trail.
+- **Ambiguous review finding or user feedback** — invoke `grilling` before assigning a finding, changing scope, or accepting a correction. If the required skill is unavailable or the user does not settle the decision, report `Blocked` rather than guessing.
+
+Do not copy or inline the grilling questionnaire, create a local alias, or act on a recommended answer without user confirmation. Capture the confirmed result in the plan's requirements, scope, decisions, risks, and validation. If the required skill cannot be invoked, stop and report the missing capability; never silently fall back to an assumption.
+
 ### Write one decision-complete `PLAN.md`
 
 Use the following sections in this order. Omit a section only when it truly does not apply.

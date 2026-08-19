@@ -62,6 +62,17 @@ Follow the full `spec` workflow and output shape:
 
 The plan is the approval gate. Do not implement source changes while drafting or publishing it. If the visual dependency is unavailable, do not improvise inline ASCII/Markdown visuals or claim the visual plan is complete; give the connector or local-mode recovery step and use text-only `spec` only when the user explicitly accepts that fallback.
 
+### Ambiguity gate: invoke grilling before assuming
+
+Do not convert an unresolved material question into an assumption. After repository research and before sealing `PLAN.md`, a visual plan, or a review result, classify each uncertainty:
+
+- **Fact** — inspect the repository, tools, tests, schemas, app shell, visual source, or docs and resolve it yourself.
+- **Material product, UX, architecture, or data decision** — invoke the existing `grilling` skill and wait for its design-tree interview to reach a user-confirmed shared understanding.
+- **Vocabulary or documentation conflict** — invoke the existing `grill-with-docs` skill so its `grilling` and `domain-modeling` dispatches handle repository terminology and the requested documentation trail.
+- **Ambiguous visual feedback, annotation, or review finding** — invoke `grilling` before patching a visual, changing scope, or assigning a finding. If the required skill is unavailable or the user does not settle the interpretation, report `Blocked` rather than guessing.
+
+Do not copy or inline the grilling questionnaire, create a local alias, or treat a recommendation as approval. Capture the confirmed result in the contract, visual blocks, open questions, risks, and validation. If the required skill cannot be invoked, stop and report the missing capability; never silently fall back to an assumption.
+
 ### Readiness checks
 
 Before handing off, verify that:
