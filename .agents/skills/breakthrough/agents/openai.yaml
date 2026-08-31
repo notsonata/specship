@@ -1,0 +1,7 @@
+interface:
+  display_name: "Breakthrough"
+  short_description: "Reframe and investigate stubborn software problems"
+  default_prompt: "Use $breakthrough to investigate this difficult software problem, present an evidence-backed direction for my approval, and hand approved findings to $spec without implementing code."
+
+policy:
+  allow_implicit_invocation: false

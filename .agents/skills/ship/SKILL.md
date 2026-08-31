@@ -5,7 +5,7 @@ description: Implement or resume one complete spec execution contract from an ex
 
 # Ship
 
-Act as the execution agent. Implement one complete plan, verify its requirements, record concise evidence, and stop for optional independent review.
+Act as the code execution agent. Implement one complete plan, verify its requirements, record concise evidence, and stop for optional independent review. Do not act as the planner or perform open-ended debugging; unresolved causal investigation belongs to `breakthrough` and contract decisions belong to `spec`.
 
 Treat `PLAN.md` and the repository as the source of truth. Do not depend on the planning session.
 
@@ -13,9 +13,9 @@ Treat `PLAN.md` and the repository as the source of truth. Do not depend on the 
 
 Use the invocation syntax native to the active host:
 
-- Codex: `$ship` and `$spec`.
-- Slash-command hosts: `/ship` and `/spec`.
-- Other hosts: select or invoke the installed `ship` and `spec` skills using that host's normal skill interface.
+- Codex: `$ship`, `$breakthrough`, and `$spec`.
+- Slash-command hosts: `/ship`, `/breakthrough`, and `/spec`.
+- Other hosts: select or invoke the installed `ship`, `breakthrough`, and `spec` skills using that host's normal skill interface.
 
 Preserve the active host's syntax in every ready-to-copy handoff. The examples below use `/ship` and `/spec` as protocol notation unless both host forms are shown; do not present slash syntax as universal.
 
@@ -83,15 +83,19 @@ For a correction cycle, verify that the active `REVIEW.md` also names the violat
 
 Continue when a missing detail is operational and is settled by explicit repository convention. Record any meaningful non-behavioral assumption in `RESULTS.md`.
 
-Block when the gap requires product or architecture judgment. Do not compensate with open-ended exploration.
+Block when the gap requires product or architecture judgment or when the planned implementation reaches an unresolved causal failure. Do not compensate with planning or open-ended debugging.
 
 ## Handle blockers
 
 When blocked:
 
 1. Preserve safe partial work.
-2. Append an entry to the active execution record with the task, requirement IDs, observed evidence, partial changes, validation, and one exact blocking question.
-3. Tell the user to return to `$spec update docs/plans/<plan>` in Codex or `/spec update docs/plans/<plan>` on slash-command hosts, using the active host's syntax.
+2. Append an entry to the active execution record with the task, requirement IDs, observed evidence, partial changes, validation, materially distinct failed hypotheses when applicable, and one exact blocker.
+3. Route the blocker by ownership:
+   - For a missing product, architecture, compatibility, scope, rollout, security, data, or acceptance decision, return to `$spec update docs/plans/<plan>` in Codex or `/spec update docs/plans/<plan>` on slash-command hosts.
+   - For an unexplained technical failure whose causal model has not converged, recommend running the following with the strongest appropriate reasoning model available: `$breakthrough investigate docs/plans/<plan> <exact stalled problem>` in Codex or the equivalent `/breakthrough` command on slash-command hosts.
+
+Do not send a breakthrough direction directly back into execution. After the user approves the investigation, `breakthrough` hands it to `spec update`; `ship` resumes only from the revised decision-complete plan.
 
 ## Execute task by task
 
@@ -146,7 +150,9 @@ For correction cycles, use this finding-scoped result shape instead of plan task
 
 Use the plan's implementation decisions as decisions, not suggestions. Prefer the first plan-compatible implementation supported by existing repository patterns.
 
-After three distinct falsified root-cause or implementation hypotheses without convergence, stop. Record the hypotheses and evidence, then ask one unresolved question. Do not count routine syntax, compilation, formatting, or fixture corrections as separate hypotheses.
+Perform only the task-local correction needed to apply the specified change and verify it. Fix obvious syntax, compilation, formatting, fixture, or directly evidenced coding mistakes caused by the implementation.
+
+Do not generate or test competing root-cause hypotheses. When the required behavior still fails and the cause is not a directly evidenced local coding mistake, stop and route the causal investigation to `breakthrough`. Record the observed failure, checks already run, and evidence gathered so the stronger reasoning task can start from them.
 
 If a task needs materially more files, behavior, or architecture than its change map describes, treat that as a contract mismatch and block instead of silently widening scope.
 

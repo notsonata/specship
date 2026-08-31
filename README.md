@@ -1,11 +1,12 @@
 # Specship
 
-Turn an ambiguous coding request into a precise implementation contract, execute the complete contract with one executor, and independently review the result.
+Investigate a stubborn software problem when needed, turn the approved direction or an ordinary request into a precise implementation contract, execute the complete contract with one code executor, and independently review the result.
 
-Specship provides three portable Agent Skills:
+Specship provides four portable Agent Skills:
 
 - **spec** investigates a repository and writes or reviews a decision-complete contract.
 - **spec-visual** follows the same contract protocol while adding a grounded visual review surface for plans.
+- **breakthrough** reframes a difficult or stalled software problem, tests materially different causal models, and asks for approval before handing evidence to `spec`.
 - **ship** implements one complete contract, validates every mapped requirement, and records concise evidence.
 
 The plan folder is the handoff. Planning, implementation, and review can happen in separate sessions, agents, or model providers without relying on shared chat history.
@@ -14,7 +15,7 @@ The plan folder is the handoff. Planning, implementation, and review can happen 
 
 ## Why use Specship?
 
-Coding agents often lose time in one of two places: an executor has to rediscover decisions that should have been settled during planning, or it quietly fills gaps with assumptions that change the intended result.
+Coding agents often lose time when an executor has to rediscover decisions that should have been settled during planning, quietly fills gaps with assumptions that change the intended result, or keeps debugging inside a problem frame that no longer explains the evidence.
 
 Specship separates those responsibilities:
 
@@ -22,7 +23,8 @@ Specship separates those responsibilities:
 | --- | --- | --- |
 | spec | Investigate, resolve ambiguity, select an approach, and define observable success. | Never implements source changes. |
 | spec-visual | Do everything `spec` does and publish diagrams, file maps, wireframes, prototypes, or structured review blocks when they help. | Visual artifacts supplement `PLAN.md`; it never implements source changes. |
-| ship | Execute every task in one explicit plan and prove the mapped requirements. | Never edits the plan or invents product or architecture decisions. |
+| breakthrough | Discover an evidence-supported direction when a problem is genuinely difficult, unexplained, or stalled. | Never writes implementation code or a plan; the user must approve the direction before it is handed to `spec`. |
+| ship | Write the code for every task in one explicit plan and prove the mapped requirements. | Never plans, performs open-ended debugging, edits the plan, or invents decisions. |
 
 The result is a concrete execution contract with exact files and symbols, dependency-ordered tasks, preserved behavior, testable requirements, and proportionate validation commands.
 
@@ -32,18 +34,26 @@ Specship uses a single executor. It does not require a coordinator, subagent swa
 
 Use the syntax native to your agent host:
 
-| Host | Plan or review | Implement |
-| --- | --- | --- |
-| Codex | `$spec ...` or `$spec-visual ...` | `$ship ...` |
-| Slash-command hosts | `/spec ...` or `/spec-visual ...` | `/ship ...` |
-| Other Agent Skills hosts | Select or invoke the installed `spec`, `spec-visual`, or `ship` skill using the host's skill interface. | Same. |
+| Host | Investigate a hard problem | Plan or review | Implement |
+| --- | --- | --- | --- |
+| Codex | `$breakthrough ...` | `$spec ...` or `$spec-visual ...` | `$ship ...` |
+| Slash-command hosts | `/breakthrough ...` | `/spec ...` or `/spec-visual ...` | `/ship ...` |
+| Other Agent Skills hosts | Select or invoke the installed `breakthrough` skill. | Select or invoke `spec` or `spec-visual`. | Select or invoke `ship`. |
 
-Examples in the workflow below use slash-command syntax as protocol notation. In Codex, replace `/spec` with `$spec`, `/spec-visual` with `$spec-visual`, and `/ship` with `$ship`. Each skill returns ready-to-copy handoffs in the active host's native syntax.
+Examples in the workflow below use slash-command syntax as protocol notation. In Codex, replace `/breakthrough` with `$breakthrough`, `/spec` with `$spec`, `/spec-visual` with `$spec-visual`, and `/ship` with `$ship`. Each skill returns ready-to-copy handoffs in the active host's native syntax.
 
 ## How it works
 
 ```text
+optional discovery prelude:
+/breakthrough <difficult problem>
+      -> user approves the supported direction
+      -> /spec create a plan from the approved investigation
+
+ordinary entry:
 /spec <request>
+
+either planning entry
       |
       v
 docs/plans/<plan>/PLAN.md (revision 1)
@@ -64,6 +74,22 @@ docs/plans/<plan>/reviews/round-001/REVIEW.md
 /ship writes reviews/round-001/RESULTS.md
 ```
 
+The optional breakthrough path replaces the direct `/spec <request>` entry in this diagram; it does not create a second plan. A stalled `/ship` run can also return through `/breakthrough`, user approval, and `/spec update` before execution resumes.
+
+### Optional: break through a difficult problem
+
+Use `breakthrough` before planning when the problem is unusually difficult, prior attempts are cycling, or the current framing does not explain the evidence:
+
+```text
+/breakthrough Investigate why synchronization keeps creating duplicate records and find a supported direction for a new plan.
+```
+
+`breakthrough` performs causal investigation without editing source code or creating `PLAN.md`. It presents the evidence, proposed direction, tradeoffs, remaining uncertainty, and likely contract impact, then waits for explicit approval. Invocation alone is not approval. If the user asks for more investigation or a revision, it continues and presents the changed direction again.
+
+Only after approval does it persist an immutable `docs/plans/<plan>/investigations/breakthrough-NNN.md` brief and return a ready-to-copy `spec` handoff. For a new plan, `spec` verifies the approved investigation and creates `PLAN.md` in that candidate folder. For a stalled existing plan, `spec update` incorporates the approved evidence into a new plan revision. `ship` never executes a breakthrough brief directly.
+
+The skill cannot select a model. When the host offers model choice, run `breakthrough` in a separate task with the strongest appropriate reasoning model available.
+
 ### 1. Create the contract
 
 Start a planning session and describe the outcome you want:
@@ -80,7 +106,7 @@ For UI-heavy, architecture-heavy, risky, or otherwise important work that benefi
 
 `spec-visual` keeps `docs/plans/<plan>/PLAN.md` as the exact executor contract and adds a hosted or local Agent-Native visual review surface. The visual artifact is supplementary, so `$ship` can execute the same plan even when the visual viewer is unavailable later.
 
-Both planning skills include a built-in decision interview whenever a material decision, ambiguous finding, terminology conflict, or unclear visual comment remains. The interview maps a design tree, asks the settled frontier in rounds with recommended answers, resolves facts from the repository, waits for user confirmation, and records the result in the existing plan and visual artifacts. No additional skill is required or installed.
+Both planning skills include a built-in decision interview whenever a material decision, ambiguous finding, terminology conflict, or unclear visual comment remains. The interview maps a design tree, asks the settled frontier in rounds with recommended answers, resolves facts from the repository, waits for user confirmation, and records the result in the existing plan and visual artifacts. No separate interview skill is required.
 
 When explicitly prompted to split a large plan, either planner first returns a dependency-aware phase map, then creates one complete `PLAN.md` and (for `spec-visual`) one matching visual artifact per independently shippable phase. Each phase has its own observable outcome, requirements, dependencies, validation, and deferred scope; the planners do not split by file layer alone or invent a phase boundary without confirmation.
 
@@ -173,6 +199,8 @@ Each request gets one plain kebab-case folder:
 docs/plans/<plan>/
 ├── PLAN.md                       # revisioned contract owned by spec
 ├── RESULTS.md                    # non-review execution evidence owned by ship
+├── investigations/              # optional approved evidence owned by breakthrough
+│   └── breakthrough-001.md       # immutable; advisory, never executable by ship
 ├── visual/                       # optional local MDX source owned by spec-visual
 │   ├── plan.mdx
 │   ├── canvas.mdx                # optional
@@ -186,7 +214,7 @@ docs/plans/<plan>/
         └── RESULTS.md
 ```
 
-`PLAN.md` remains unchanged during execution and review. Each execution and review artifact records the plan revision it applies to. Each review correction cycle keeps its review and evidence together, so later rounds never rewrite earlier bookkeeping.
+Before planning, a candidate folder may contain only `investigations/breakthrough-001.md`; it is not executable until `spec` creates `PLAN.md`. `PLAN.md` remains unchanged during execution and review. Each execution and review artifact records the plan revision it applies to. Each review correction cycle keeps its review and evidence together, so later rounds never rewrite earlier bookkeeping.
 
 Git preserves contract history. Specship does not add a lifecycle database, state machine, repository fingerprint, manifest, scheduler, or mandatory handover document.
 
@@ -217,9 +245,11 @@ Review-only defects do not trigger a plan update. Their correction contract rema
 Specship is intentionally strict about ownership:
 
 - Repository instruction files remain authoritative.
+- `breakthrough` does not persist a planning brief until the user approves the presented direction.
 - `spec` asks only questions that can materially change the result.
-- `ship` preserves unrelated user changes and avoids unrelated cleanup.
+- `ship` implements the approved contract, preserves unrelated user changes, and avoids open-ended debugging or unrelated cleanup.
 - Missing material decisions return to `spec`; execution does not guess them.
+- Unresolved causal failures return through `breakthrough`, user approval, and `spec update` before execution resumes.
 - Validation starts with the smallest relevant check and broadens only when risk or repository rules justify it.
 - Full-suite runs are reserved for cross-cutting changes, explicit requirements, or meaningful regression risk.
 - Complexity findings identify correctness, maintenance, contract, integration, or scope risk—not personal style preferences.
@@ -239,12 +269,12 @@ The repository-local `spec-visual` skill is included; visual rendering needs an 
 - **Hosted plans:** install and authenticate the connector once for Codex with `npx -y @agent-native/core@latest skills add visual-plan --client codex`, then start a new Codex task so the `plan` tools load. If it is already registered, reconnect with `npx -y @agent-native/core@latest reconnect https://plan.agent-native.com --client codex`.
 - **Local/private plans:** use `AGENT_NATIVE_PLANS_MODE=local-files` and the Agent-Native CLI's `plan local check`, `plan local serve`, and `plan local verify` commands against `docs/plans/<plan>/visual/`. No hosted Plan authentication is required. Use a Chromium-based browser for the local bridge.
 
-The visual connector/CLI is optional for ordinary `$spec` and `$ship` workflows.
+The visual connector/CLI is optional for ordinary `$breakthrough`, `$spec`, and `$ship` workflows.
 
 ### Install globally
 
 ```bash
-npx skills add notsonata/specship --skill spec --skill spec-visual --skill ship --global --yes
+npx skills add notsonata/specship --skill breakthrough --skill spec --skill spec-visual --skill ship --global --yes
 ```
 
 Use `--agent <agent-id>` to select a target explicitly. Repeat the flag to install into multiple agents. Restart an agent if the new skills do not appear immediately. A host that does not support global skill installation may be reported separately while supported hosts still install successfully.
@@ -254,7 +284,7 @@ Use `--agent <agent-id>` to select a target explicitly. Repeat the flag to insta
 Run the same command from the target repository without `--global`:
 
 ```bash
-npx skills add notsonata/specship --skill spec --skill spec-visual --skill ship --yes
+npx skills add notsonata/specship --skill breakthrough --skill spec --skill spec-visual --skill ship --yes
 ```
 
 ### Install from a local clone
@@ -262,15 +292,18 @@ npx skills add notsonata/specship --skill spec --skill spec-visual --skill ship 
 ```bash
 git clone https://github.com/notsonata/specship.git
 cd specship
-npx skills add . --skill spec --skill spec-visual --skill ship --global --yes
+npx skills add . --skill breakthrough --skill spec --skill spec-visual --skill ship --global --yes
 ```
 
 ## Quick reference
 
-The examples use slash-command syntax. Codex users should use `$spec`, `$spec-visual`, and `$ship`.
+The examples use slash-command syntax. Codex users should use `$breakthrough`, `$spec`, `$spec-visual`, and `$ship`.
 
 | Goal | Command |
 | --- | --- |
+| Investigate a difficult problem before planning | `/breakthrough <problem>` |
+| Investigate a stalled plan | `/breakthrough investigate docs/plans/<plan> <stalled problem>` |
+| Create a plan from an approved breakthrough | `/spec create a plan from docs/plans/<plan>/investigations/breakthrough-NNN.md` |
 | Plan a new request | `/spec <request>` |
 | Plan with visual review | `/spec-visual <request>` |
 | Implement a plan | `/ship implement this plan: docs/plans/<plan>` |
@@ -278,11 +311,11 @@ The examples use slash-command syntax. Codex users should use `$spec`, `$spec-vi
 | Review an implementation | `/spec review docs/plans/<plan>` |
 | Correct reviewed work | Run `/ship` again with the same folder. |
 
-Always name the exact plan folder for implementation, update, and review. Specship never guesses the newest plan or combines multiple plan folders.
+Always name the exact plan folder for recovery, implementation, update, and review. Specship never guesses the newest plan or combines multiple plan folders.
 
 ## Model and agent portability
 
-The contract and evidence are plain Markdown and contain no provider-specific execution state. Planning and execution may use different Agent Skills-compatible hosts or model providers, provided each selected agent can read and edit the repository, run the required tools, and follow project instructions. Host-native invocation is the only syntax-level difference described by the protocol.
+The contract and evidence are plain Markdown and contain no provider-specific execution state. Investigation, planning, and execution may use different Agent Skills-compatible hosts or model providers, provided each selected agent can read and edit the repository, run the required tools, and follow project instructions. Use the strongest appropriate reasoning model available for `breakthrough`; the portable skill does not enforce a model name. Host-native invocation is the only syntax-level difference described by the protocol.
 
 ## License
 
@@ -290,4 +323,4 @@ Licensed under the Apache License 2.0. See [LICENSE](LICENSE).
 
 ## Project status
 
-Specship is an early public preview. The current focus is dogfooding the workflow across small fixes, multi-task features, interrupted execution, explicit contract updates, correction rounds, and passing and failing reviews. Protocol machinery is added only when repeated use demonstrates a concrete failure that simpler instructions and repository evidence cannot address.
+Specship is an early public preview. The current focus is dogfooding the workflow across small fixes, multi-task features, difficult pre-plan discovery, stalled execution recovery, explicit contract updates, correction rounds, and passing and failing reviews. Protocol machinery is added only when repeated use demonstrates a concrete failure that simpler instructions and repository evidence cannot address.

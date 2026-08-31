@@ -11,19 +11,20 @@ Act as the planning and review agent. Turn the user's request and verified repos
 
 Use the invocation syntax native to the active host:
 
-- Codex: `$spec` and `$ship`.
-- Slash-command hosts: `/spec` and `/ship`.
-- Other hosts: select or invoke the installed `spec` and `ship` skills using that host's normal skill interface.
+- Codex: `$spec`, `$breakthrough`, and `$ship`.
+- Slash-command hosts: `/spec`, `/breakthrough`, and `/ship`.
+- Other hosts: select or invoke the installed `spec`, `breakthrough`, and `ship` skills using that host's normal skill interface.
 
 Preserve the active host's syntax in every ready-to-copy handoff. The examples below use `/spec` and `/ship` as protocol notation unless both host forms are shown; do not present slash syntax as universal.
 
 ## Choose the operation
 
 - `/spec <request>`: create a plan.
+- `/spec create a plan from docs/plans/<plan>/investigations/breakthrough-NNN.md`: create a plan from a user-approved breakthrough investigation.
 - `/spec update docs/plans/<plan> [new information]`: update an existing plan.
 - `/spec review docs/plans/<plan>`: review the implementation against the plan.
 
-Require the exact folder before updating or reviewing. Never guess or silently replace a plan folder.
+Require the exact folder before creating from an investigation, updating, or reviewing. Never guess or silently replace a plan folder or investigation artifact.
 
 ## Use the plan folder as the handoff
 
@@ -32,15 +33,32 @@ Store each plan at `docs/plans/<plain-kebab-case-slug>/`:
 ```text
 PLAN.md                       # execution contract owned by spec
 RESULTS.md                    # non-review execution log owned by ship
+investigations/
+└── breakthrough-001.md       # immutable approved evidence owned by breakthrough
 reviews/
 └── round-001/
     ├── REVIEW.md             # one immutable review round owned by spec
     └── RESULTS.md            # that round's corrective execution owned by ship
 ```
 
-Do not create `RESULTS.md` or `reviews/` during initial planning. Never write review findings to root `REVIEW.md`. Do not edit any `RESULTS.md`. Do not edit `PLAN.md` while `/ship` is executing it.
+The `investigations/` directory is optional. A candidate plan folder may contain approved breakthrough investigations before `PLAN.md` exists; it is not an executable plan until `spec` creates `PLAN.md`.
+
+Do not create `RESULTS.md`, `reviews/`, or breakthrough investigation artifacts during initial planning. Never edit an existing breakthrough artifact. Never write review findings to root `REVIEW.md`. Do not edit any `RESULTS.md`. Do not edit `PLAN.md` while `/ship` is executing it.
 
 ## Create a plan
+
+### Create from an approved breakthrough
+
+When the user explicitly invokes `/spec create a plan from docs/plans/<plan>/investigations/breakthrough-NNN.md`:
+
+1. Require that exact investigation path and read it in full.
+2. Verify that it records user approval for planning handoff and that the candidate folder does not already contain `PLAN.md`. If approval is absent, return to `/breakthrough`; if `PLAN.md` exists, require `/spec update` instead.
+3. Treat the investigation as advisory evidence, not as requirements, settled product decisions, or an executable contract.
+4. Recheck material repository claims and inspect any implementation surfaces needed to plan accurately.
+5. Run the normal ambiguity gate for every unresolved decision. The earlier approval accepts the breakthrough direction as planning input; it does not pre-approve the finished contract.
+6. Create `PLAN.md` in the existing candidate folder only after the normal planning requirements are satisfied.
+
+Do not rewrite or consume the investigation artifact. Cite it in repository evidence where it materially supports the selected approach.
 
 ### Investigate before deciding
 
@@ -204,6 +222,8 @@ Before handing off, verify all of the following:
 End with the folder and an exact handoff using the active host's syntax: `$ship implement this plan: docs/plans/<plan>` in Codex or `/ship implement this plan: docs/plans/<plan>` on slash-command hosts.
 
 ## Update a plan
+
+When the update explicitly names `docs/plans/<plan>/investigations/breakthrough-NNN.md`, require that exact path, verify that it records user approval for planning handoff, and read it in full. Treat it as immutable advisory evidence: recheck material claims, resolve remaining decisions through the normal ambiguity gate, and incorporate only supported conclusions into the contract. Never edit the investigation or treat it as executable instructions.
 
 1. Read `PLAN.md`, root `RESULTS.md`, all existing `reviews/round-NNN/REVIEW.md` and `reviews/round-NNN/RESULTS.md` files, and relevant repository changes.
 2. Read `Plan revision`; treat a legacy plan with no revision field as revision `1`.
