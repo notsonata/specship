@@ -85,16 +85,11 @@ Do not convert an unresolved material question into an assumption. After reposit
 
 1. **Map the design tree.** Break the plan, finding, or user feedback into decisions and the downstream decisions that depend on them.
 2. **Find facts yourself.** Resolve anything the filesystem, tools, tests, schemas, configuration, repository docs, `CONTEXT.md`, glossary, or ADRs can answer. Do not ask the user for facts the repository can provide.
-3. **Work in rounds.** The frontier is every decision whose prerequisites are settled. Ask the whole current frontier in one round; defer dependent questions to a later round.
-4. **Recommend, then wait.** Number every question and give a recommended answer, but treat it as a proposal. Wait for the user's answers before writing the plan, assigning a finding, or accepting a correction. Recompute the frontier after each round.
-5. **Close deliberately.** The interview ends only when the frontier is empty, every material branch has been visited, nothing is silently assumed, and the user confirms shared understanding.
+3. **Ask one decision.** Ask exactly one question at a time: choose a material decision whose prerequisites are settled, provide your recommended answer and rationale, then wait for the user's answer before asking another. Never batch independent questions or offer an “accept all recommendations” shortcut.
+4. **Advance from the answer.** Incorporate the answer, recompute the decision tree, and ask the next unblocked material question. A dependent decision waits until its prerequisite is settled.
+5. **Close deliberately.** Continue until every material branch has been visited and nothing remains silently assumed. Summarize the resulting shared understanding and ask the user to confirm it before writing the plan, assigning a finding, or accepting a correction.
 
-Use this exact question shape:
-
-```text
-❓ **Q1** - **<question title>**: <question body, including choices or scenarios>
-➡️ <your recommended answer and why>
-```
+Keep each question conversational and focused. Include choices only when they clarify a real decision; do not impose a numbered questionnaire, round header, emoji template, or multi-question response format.
 
 For terminology or documentation conflicts, show the repository evidence, ask which meaning governs, and record the confirmed term or decision in the existing Specship plan sections. Do not invent a second docs/ADR system. If the user does not settle a material decision, report `Blocked` rather than guessing. Capture confirmed answers in the plan's requirements, scope, decisions, risks, and validation.
 
