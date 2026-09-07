@@ -27,14 +27,19 @@ worker transcripts, metrics, state, or Codex-only requirements to them.
 
 Use only `specship_scout` for `explore`, `impact`, and `review`, and
 `specship_validator` for `validate`. If either type needed for the operation is
-unavailable, do not substitute a general worker. Return `Blocked` with:
+unavailable, do not substitute a general worker. Check whether both definitions
+already exist as personal agents under `~/.codex/agents/` or as project agents
+under `.codex/agents/`. If they exist, return `Blocked` and tell the user to
+fully restart Codex and start a new task; do not recommend reinstalling them.
 
-```bash
-python3 .agents/skills/spec-codex/scripts/install_agents.py --scope project --project-root .
-```
+If they are absent, return `Blocked` and recommend a one-time personal install:
+run the bundled `scripts/install_agents.py --scope user` from this installed
+skill directory. Give the path syntax for the user's shell (`~/.agents/skills/`
+on POSIX or `%USERPROFILE%\.agents\skills\` in Windows Command Prompt). Mention
+project scope only when the user explicitly wants repository-local agents.
 
-Then tell the user to start a new Codex task. The TOML files pin the worker model
-but deliberately leave reasoning effort unset so each dispatch can select it.
+The TOML files pin the worker model but deliberately leave reasoning effort unset
+so each dispatch can select it.
 Spawn every normal worker with its named `agent_type`, `fork_turns: none`, and
 `reasoning_effort: high`. Use `reasoning_effort: xhigh` only for a focused retry
 when material evidence remains incomplete or contradictory. Never use a full-

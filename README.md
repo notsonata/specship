@@ -285,21 +285,41 @@ The visual connector/CLI is optional for ordinary `$breakthrough`, `$spec`, and 
 
 ### Optional Spec Codex setup
 
-Install `spec` and `spec-codex`, then install the bundled custom agents into the target project:
+The recommended setup is a **one-time, machine-wide setup**. Install both skills
+for Codex, then register the bundled custom agents at user scope:
 
 ```bash
-npx skills add notsonata/specship --skill spec --skill spec-codex --yes
-python3 .agents/skills/spec-codex/scripts/install_agents.py --scope project --project-root .
+npx skills add notsonata/specship --skill spec --skill spec-codex --agent codex --global --yes
 ```
 
-For a global skill installation, install the agent definitions at user scope:
+On macOS or Linux:
 
 ```bash
-npx skills add notsonata/specship --skill spec --skill spec-codex --global --yes
 python3 ~/.agents/skills/spec-codex/scripts/install_agents.py --scope user
 ```
 
-Start a new Codex task after installation so the custom agents load. The installed roles are namespaced and require the literal `$spec-codex` activation marker, so their presence does not activate delegated planning for ordinary `$spec`, `$ship`, or unrelated work. Existing different files are never overwritten unless the installer is run with `--force`.
+In Windows Command Prompt:
+
+```cmd
+python3 "%USERPROFILE%\.agents\skills\spec-codex\scripts\install_agents.py" --scope user
+```
+
+This writes `specship-scout.toml` and `specship-validator.toml` to the personal
+Codex agent directory (`~/.codex/agents/`, or `%USERPROFILE%\.codex\agents\` on
+Windows), making them available to every local project. Fully quit and reopen
+Codex after installation, then start a new task so the custom agents load.
+
+Project scope is optional and intended only when a repository should carry its
+own agent definitions. From that repository, run:
+
+```bash
+python3 .agents/skills/spec-codex/scripts/install_agents.py --scope project --project-root .
+```
+
+The installed roles are namespaced and require the literal `$spec-codex`
+activation marker, so their presence does not activate delegated planning for
+ordinary `$spec`, `$ship`, or unrelated work. Existing different files are never
+overwritten unless the installer is run with `--force`.
 
 ### Install globally
 
