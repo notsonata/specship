@@ -298,19 +298,20 @@ npx skills add notsonata/specship --skill spec --skill spec-codex --agent codex 
 On macOS or Linux:
 
 ```bash
-python3 ~/.agents/skills/spec-codex/scripts/install_agents.py --scope user
+python3 ~/.agents/skills/spec-codex/scripts/install_agents.py --scope user --force
 ```
 
 In Windows Command Prompt:
 
 ```cmd
-python3 "%USERPROFILE%\.agents\skills\spec-codex\scripts\install_agents.py" --scope user
+python3 "%USERPROFILE%\.agents\skills\spec-codex\scripts\install_agents.py" --scope user --force
 ```
 
 This writes `specship-scout.toml` and `specship-validator.toml` to the personal
 Codex agent directory (`~/.codex/agents/`, or `%USERPROFILE%\.codex\agents\` on
-Windows), making them available to every local project. Fully quit and reopen
-Codex after installation, then start a new task so the custom agents load.
+Windows), making them available to every local project. `--force` also refreshes
+older Specship-managed definitions during an upgrade. Fully quit and reopen Codex
+after installation, then start a new task so the custom agents load.
 
 Project scope is optional and intended only when a repository should carry its
 own agent definitions. From that repository, run:
