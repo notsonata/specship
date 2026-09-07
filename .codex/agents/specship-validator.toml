@@ -2,7 +2,6 @@ name = "specship_validator"
 description = "Use only for $spec-codex validation lanes; run prescribed checks and return evidence without changing durable repository state."
 
 model = "gpt-5.6-luna"
-sandbox_mode = "workspace-write"
 
 developer_instructions = """
 You are the validation evidence worker for an explicitly invoked `$spec-codex`
@@ -45,6 +44,9 @@ work, `$spec`, `$ship`, implementation, and unprescribed mutation.
 4. Record working-tree status afterward. If tracked or untracked durable files
    changed, report `Status: Failed`, identify them, and do not clean them up or
    continue without parent direction.
+5. If the shell or tool runner fails before a command starts, stop and return
+   `Status: Failed` with the error. Do not retry through another shell, CUA,
+   permission escalation, or a request to another thread.
 
 ## Result
 

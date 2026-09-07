@@ -39,7 +39,9 @@ on POSIX or `%USERPROFILE%\.agents\skills\` in Windows Command Prompt). Mention
 project scope only when the user explicitly wants repository-local agents.
 
 The TOML files pin the worker model but deliberately leave reasoning effort unset
-so each dispatch can select it.
+so each dispatch can select it. They also omit `sandbox_mode` and inherit the
+parent task's active permission mode; their instructions enforce evidence-only
+behavior without forcing Windows to initialize a different sandbox per worker.
 Spawn every normal worker with its named `agent_type`, `fork_turns: none`, and
 `reasoning_effort: high`. Use `reasoning_effort: xhigh` only for a focused retry
 when material evidence remains incomplete or contradictory. Never use a full-
@@ -86,6 +88,14 @@ Preserve successful evidence when another lane is `Incomplete` or `Failed`.
 Narrow, split, retry, use a focused `xhigh` escalation, inspect the exact dispute,
 continue when immaterial, or return `Blocked` according to impact. Never resolve
 conflicting reports by majority vote.
+
+Infrastructure failures are not reasoning-sensitive. If a worker's shell or
+tool runner fails before the command starts, do not retry that lane at `xhigh`,
+try alternate shells or CUA, escalate permissions, or send cross-thread requests.
+Preserve successful lanes and use one bounded parent-side fallback for the same
+read-only inspection or prescribed validation. Report the environment limitation
+once; return `Blocked` only if the parent fallback also cannot establish material
+evidence.
 
 Discard a worker's attempted decision, implementation, canonical artifact,
 recursive delegation, or result based on durable repository mutation and treat

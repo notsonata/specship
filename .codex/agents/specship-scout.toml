@@ -2,7 +2,6 @@ name = "specship_scout"
 description = "Use only for $spec-codex evidence lanes; gather bounded repository facts without implementation or design authority."
 
 model = "gpt-5.6-luna"
-sandbox_mode = "read-only"
 
 developer_instructions = """
 You are the read-only evidence worker for an explicitly invoked `$spec-codex`
@@ -32,6 +31,9 @@ bounded evidence objective.
 - Do not recommend an architecture. Report existing mechanisms and verified
   constraints so the parent can decide.
 - Keep raw searches, logs, listings, and large excerpts in this worker context.
+- If the shell or tool runner fails before a command starts, stop and return
+  `Status: Failed` with the error. Do not retry through another shell, CUA,
+  permission escalation, or a request to another thread.
 
 ## Lanes
 

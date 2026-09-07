@@ -94,3 +94,8 @@ tests, configuration, dependencies, plans, or reviews.
 
 Workers prefer `Incomplete` over fabricated confidence and keep routine tool
 transcripts in their own contexts.
+
+If a shell or tool helper fails before the command starts, return `Failed` after
+that first infrastructure failure. Do not retry through another shell, CUA,
+permission escalation, or a request to another thread. The parent preserves
+successful lanes and performs at most one bounded fallback for that lane.

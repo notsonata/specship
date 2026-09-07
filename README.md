@@ -120,6 +120,9 @@ When explicitly prompted to split a large plan, either planner first returns a d
 
 `$spec-codex` is an explicit-only Codex companion to `$spec`. It loads and follows the complete `$spec` protocol, but delegates bounded repository grunt work to the project-scoped `specship_scout` and `specship_validator` agents. The scout handles exploration, impact inventories, and bounded review checks; the validator discovers or runs parent-prescribed checks. Both pin GPT-5.6 Luna in their TOML and are dispatched with high reasoning effort and no inherited parent history. Extra-high effort is reserved for focused retries when material evidence remains contradictory or incomplete.
 
+Workers inherit the parent task's active permission mode instead of forcing a separate sandbox configuration. Their instructions still prohibit source changes, avoiding unnecessary Windows sandbox reinitialization for each evidence lane.
+If a worker's command runner cannot initialize, the parent performs that one bounded evidence check directly instead of launching repeated reasoning retries or alternate shell workarounds. This fallback is the same on Windows, macOS, and Linux.
+
 The parent model remains responsible for user interaction, product and architecture decisions, requirements, tasks, phase boundaries, findings, corrective scope, `PLAN.md`, canonical `REVIEW.md`, and final review outcomes. Worker outputs are compact source-linked evidence, not decisions. Neither the parent nor the workers implement application changes, and workers refuse tasks that do not carry the `$spec-codex` activation marker.
 
 The resulting plan and review artifacts are ordinary Specship artifacts. `$spec`, `$spec-codex`, and `$ship` can consume them without conversion or access to worker transcripts.
