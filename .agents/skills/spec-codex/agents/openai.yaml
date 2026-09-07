@@ -1,0 +1,7 @@
+interface:
+  display_name: "Spec Codex"
+  short_description: "Delegate evidence gathering for exact specs"
+  default_prompt: "Use $spec-codex to create, update, split, or review a Specship contract while delegating bounded repository evidence work to Codex subagents."
+
+policy:
+  allow_implicit_invocation: false

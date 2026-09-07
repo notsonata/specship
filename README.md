@@ -2,12 +2,13 @@
 
 Investigate a stubborn software problem when needed, turn the approved direction or an ordinary request into a precise implementation contract, execute the complete contract with one code executor, and independently review the result.
 
-Specship provides four portable Agent Skills:
+Specship provides four portable Agent Skills and one optional Codex companion:
 
 - **spec** investigates a repository and writes or reviews a decision-complete contract.
 - **spec-visual** follows the same contract protocol while adding a grounded visual review surface for plans.
 - **breakthrough** reframes a difficult or stalled software problem, tests materially different causal models, and asks for approval before handing evidence to `spec`.
 - **ship** implements one complete contract, validates every mapped requirement, and records concise evidence.
+- **spec-codex** follows `spec` while delegating bounded repository exploration, impact analysis, validation, and review evidence to Codex subagents. It never implements application changes.
 
 The plan folder is the handoff. Planning, implementation, and review can happen in separate sessions, agents, or model providers without relying on shared chat history.
 
@@ -25,10 +26,11 @@ Specship separates those responsibilities:
 | spec-visual | Do everything `spec` does and publish diagrams, file maps, wireframes, prototypes, or structured review blocks when they help. | Visual artifacts supplement `PLAN.md`; it never implements source changes. |
 | breakthrough | Discover an evidence-supported direction when a problem is genuinely difficult, unexplained, or stalled. | Never writes implementation code or a plan; the user must approve the direction before it is handed to `spec`. |
 | ship | Write the code for every task in one explicit plan and prove the mapped requirements. | Never plans, performs open-ended debugging, edits the plan, or invents decisions. |
+| spec-codex | Apply the complete `spec` protocol while offloading bounded repository evidence work to configured Codex agents. | Codex-only, explicit-only, and never implements; workers provide evidence while the parent retains every decision and canonical artifact. |
 
 The result is a concrete execution contract with exact files and symbols, dependency-ordered tasks, preserved behavior, testable requirements, and proportionate validation commands.
 
-Specship uses a single executor. It does not require a coordinator, subagent swarm, particular model, or shared conversation state.
+Specship uses a single executor and does not require a coordinator, subagent swarm, particular model, or shared conversation state. The optional `spec-codex` companion uses two bounded Codex evidence agents during specification and review; it does not parallelize implementation.
 
 ## Invocation syntax
 
@@ -36,11 +38,11 @@ Use the syntax native to your agent host:
 
 | Host | Investigate a hard problem | Plan or review | Implement |
 | --- | --- | --- | --- |
-| Codex | `$breakthrough ...` | `$spec ...` or `$spec-visual ...` | `$ship ...` |
+| Codex | `$breakthrough ...` | `$spec ...`, `$spec-codex ...`, or `$spec-visual ...` | `$ship ...` |
 | Slash-command hosts | `/breakthrough ...` | `/spec ...` or `/spec-visual ...` | `/ship ...` |
 | Other Agent Skills hosts | Select or invoke the installed `breakthrough` skill. | Select or invoke `spec` or `spec-visual`. | Select or invoke `ship`. |
 
-Examples in the workflow below use slash-command syntax as protocol notation. In Codex, replace `/breakthrough` with `$breakthrough`, `/spec` with `$spec`, `/spec-visual` with `$spec-visual`, and `/ship` with `$ship`. Each skill returns ready-to-copy handoffs in the active host's native syntax.
+Examples in the workflow below use slash-command syntax as protocol notation. In Codex, replace `/breakthrough` with `$breakthrough`, `/spec` with `$spec`, `/spec-visual` with `$spec-visual`, and `/ship` with `$ship`. Codex users may explicitly invoke `$spec-codex` instead of `$spec` when its custom evidence agents are installed. Each skill returns ready-to-copy handoffs in the active host's native syntax.
 
 ## How it works
 
@@ -52,6 +54,8 @@ optional discovery prelude:
 
 ordinary entry:
 /spec <request>
+or, in Codex with configured evidence agents:
+$spec-codex <request>
 
 either planning entry
       |
@@ -111,6 +115,14 @@ Both planning skills include a built-in decision interview whenever a material d
 When explicitly prompted to split a large plan, either planner first returns a dependency-aware phase map, then creates one complete `PLAN.md` and (for `spec-visual`) one matching visual artifact per independently shippable phase. Each phase has its own observable outcome, requirements, dependencies, validation, and deferred scope; the planners do not split by file layer alone or invent a phase boundary without confirmation.
 
 `spec` reads repository instructions and relevant documentation, inspects the affected implementation and tests, resolves material decisions, and writes one self-contained `PLAN.md`.
+
+#### Optional: delegate evidence gathering with Spec Codex
+
+`$spec-codex` is an explicit-only Codex companion to `$spec`. It loads and follows the complete `$spec` protocol, but delegates bounded repository grunt work to the project-scoped `specship_scout` and `specship_validator` agents. The scout handles exploration, impact inventories, and bounded review checks; the validator discovers or runs parent-prescribed checks. Both pin GPT-5.6 Luna in their TOML and are dispatched with high reasoning effort and no inherited parent history. Extra-high effort is reserved for focused retries when material evidence remains contradictory or incomplete.
+
+The parent model remains responsible for user interaction, product and architecture decisions, requirements, tasks, phase boundaries, findings, corrective scope, `PLAN.md`, canonical `REVIEW.md`, and final review outcomes. Worker outputs are compact source-linked evidence, not decisions. Neither the parent nor the workers implement application changes, and workers refuse tasks that do not carry the `$spec-codex` activation marker.
+
+The resulting plan and review artifacts are ordinary Specship artifacts. `$spec`, `$spec-codex`, and `$ship` can consume them without conversion or access to worker transcripts.
 
 The plan includes:
 
@@ -271,6 +283,24 @@ The repository-local `spec-visual` skill is included; visual rendering needs an 
 
 The visual connector/CLI is optional for ordinary `$breakthrough`, `$spec`, and `$ship` workflows.
 
+### Optional Spec Codex setup
+
+Install `spec` and `spec-codex`, then install the bundled custom agents into the target project:
+
+```bash
+npx skills add notsonata/specship --skill spec --skill spec-codex --yes
+python3 .agents/skills/spec-codex/scripts/install_agents.py --scope project --project-root .
+```
+
+For a global skill installation, install the agent definitions at user scope:
+
+```bash
+npx skills add notsonata/specship --skill spec --skill spec-codex --global --yes
+python3 ~/.agents/skills/spec-codex/scripts/install_agents.py --scope user
+```
+
+Start a new Codex task after installation so the custom agents load. The installed roles are namespaced and require the literal `$spec-codex` activation marker, so their presence does not activate delegated planning for ordinary `$spec`, `$ship`, or unrelated work. Existing different files are never overwritten unless the installer is run with `--force`.
+
 ### Install globally
 
 ```bash
@@ -297,7 +327,7 @@ npx skills add . --skill breakthrough --skill spec --skill spec-visual --skill s
 
 ## Quick reference
 
-The examples use slash-command syntax. Codex users should use `$breakthrough`, `$spec`, `$spec-visual`, and `$ship`.
+The examples use slash-command syntax. Codex users should use `$breakthrough`, `$spec`, `$spec-codex`, `$spec-visual`, and `$ship`.
 
 | Goal | Command |
 | --- | --- |
@@ -305,6 +335,7 @@ The examples use slash-command syntax. Codex users should use `$breakthrough`, `
 | Investigate a stalled plan | `/breakthrough investigate docs/plans/<plan> <stalled problem>` |
 | Create a plan from an approved breakthrough | `/spec create a plan from docs/plans/<plan>/investigations/breakthrough-NNN.md` |
 | Plan a new request | `/spec <request>` |
+| Plan with delegated Codex evidence workers | `$spec-codex <request>` |
 | Plan with visual review | `/spec-visual <request>` |
 | Implement a plan | `/ship implement this plan: docs/plans/<plan>` |
 | Update a plan | `/spec update docs/plans/<plan> <new information>` |
@@ -315,7 +346,7 @@ Always name the exact plan folder for recovery, implementation, update, and revi
 
 ## Model and agent portability
 
-The contract and evidence are plain Markdown and contain no provider-specific execution state. Investigation, planning, and execution may use different Agent Skills-compatible hosts or model providers, provided each selected agent can read and edit the repository, run the required tools, and follow project instructions. Use the strongest appropriate reasoning model available for `breakthrough`; the portable skill does not enforce a model name. Host-native invocation is the only syntax-level difference described by the protocol.
+The contract and evidence are plain Markdown and contain no provider-specific execution state. Investigation, planning, and execution may use different Agent Skills-compatible hosts or model providers, provided each selected agent can read and edit the repository, run the required tools, and follow project instructions. Use the strongest appropriate reasoning model available for `breakthrough`; the portable skills do not enforce a model name. Host-native invocation is the only syntax-level difference described by the core protocol. The optional `$spec-codex` companion is deliberately Codex-specific and keeps its model choice in replaceable custom-agent TOML rather than in plan artifacts.
 
 ## License
 
