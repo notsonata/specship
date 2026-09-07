@@ -95,7 +95,12 @@ tests, configuration, dependencies, plans, or reviews.
 Workers prefer `Incomplete` over fabricated confidence and keep routine tool
 transcripts in their own contexts.
 
-If a shell or tool helper fails before the command starts, return `Failed` after
-that first infrastructure failure. Do not retry through another shell, CUA,
-permission escalation, or a request to another thread. The parent preserves
-successful lanes and performs at most one bounded fallback for that lane.
+If a shell or tool helper fails before the command starts with a sandbox or
+session setup error such as `helper_unknown_error: setup refresh had errors`,
+return `Failed` after retrying the same exact command once through the host's
+approval path, when that path is available. Do not alter or broaden the command,
+retry through another shell or CUA, increase reasoning effort, or request help
+from another thread. Never escalate an ordinary command failure. If approval is
+unavailable or denied, or the one recovery attempt fails, stop. The parent
+preserves successful lanes and performs at most one bounded fallback for that
+lane.

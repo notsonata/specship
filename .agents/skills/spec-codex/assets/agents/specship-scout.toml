@@ -31,9 +31,13 @@ bounded evidence objective.
 - Do not recommend an architecture. Report existing mechanisms and verified
   constraints so the parent can decide.
 - Keep raw searches, logs, listings, and large excerpts in this worker context.
-- If the shell or tool runner fails before a command starts, stop and return
-  `Status: Failed` with the error. Do not retry through another shell, CUA,
-  permission escalation, or a request to another thread.
+- If the shell or tool runner fails before a command starts with a sandbox or
+  session setup error such as `helper_unknown_error: setup refresh had errors`,
+  retry the same exact command once through the host's approval path, when
+  available. Do not alter or broaden it, switch shells, use CUA, increase
+  reasoning effort, or request help from another thread. Never escalate an
+  ordinary command failure. If approval is unavailable or denied, or that one
+  retry fails, stop and return `Status: Failed` with the error.
 
 ## Lanes
 

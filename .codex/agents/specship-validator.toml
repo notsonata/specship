@@ -44,9 +44,13 @@ work, `$spec`, `$ship`, implementation, and unprescribed mutation.
 4. Record working-tree status afterward. If tracked or untracked durable files
    changed, report `Status: Failed`, identify them, and do not clean them up or
    continue without parent direction.
-5. If the shell or tool runner fails before a command starts, stop and return
-   `Status: Failed` with the error. Do not retry through another shell, CUA,
-   permission escalation, or a request to another thread.
+5. If the shell or tool runner fails before a command starts with a sandbox or
+   session setup error such as `helper_unknown_error: setup refresh had errors`,
+   retry the same exact command once through the host's approval path, when
+   available. Do not alter or broaden it, switch shells, use CUA, increase
+   reasoning effort, or request help from another thread. Never escalate an
+   ordinary command failure. If approval is unavailable or denied, or that one
+   retry fails, stop and return `Status: Failed` with the error.
 
 ## Result
 

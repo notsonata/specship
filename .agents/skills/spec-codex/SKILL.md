@@ -90,12 +90,18 @@ continue when immaterial, or return `Blocked` according to impact. Never resolve
 conflicting reports by majority vote.
 
 Infrastructure failures are not reasoning-sensitive. If a worker's shell or
-tool runner fails before the command starts, do not retry that lane at `xhigh`,
-try alternate shells or CUA, escalate permissions, or send cross-thread requests.
-Preserve successful lanes and use one bounded parent-side fallback for the same
-read-only inspection or prescribed validation. Report the environment limitation
-once; return `Blocked` only if the parent fallback also cannot establish material
-evidence.
+tool runner fails before the command starts with a sandbox or session setup
+error such as `helper_unknown_error: setup refresh had errors`, do not retry that
+lane at `xhigh`, try alternate shells or CUA, or send cross-thread requests.
+Instead, retry the same exact command once through the host's approval path,
+when available. Do not change, combine, or broaden the command. This is a
+runner-recovery attempt, not permission to expand the lane. If approval is
+unavailable or denied, or that one retry fails, return `Failed`. Preserve
+successful lanes and use one bounded parent-side fallback for the same read-only
+inspection or prescribed validation. Ordinary command failures are evidence;
+never rerun them through escalation.
+Report the environment limitation once; return `Blocked` only if the parent
+fallback also cannot establish material evidence.
 
 Discard a worker's attempted decision, implementation, canonical artifact,
 recursive delegation, or result based on durable repository mutation and treat
