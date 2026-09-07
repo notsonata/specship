@@ -38,11 +38,9 @@ skill directory. Give the path syntax for the user's shell (`~/.agents/skills/`
 on POSIX or `%USERPROFILE%\.agents\skills\` in Windows Command Prompt). Mention
 project scope only when the user explicitly wants repository-local agents.
 
-The TOML files pin the worker model but deliberately leave reasoning effort unset
-so each dispatch can select it. They also omit `sandbox_mode` and inherit the
-parent task's active permission mode; their instructions enforce evidence-only
-behavior without forcing Windows to initialize a different sandbox per worker.
-Spawn every normal worker with its named `agent_type`, `fork_turns: none`, and
+The TOML files pin the worker model and role-appropriate sandbox but deliberately
+leave reasoning effort unset so each dispatch can select it. Spawn every normal
+worker with its named `agent_type`, `fork_turns: none`, and
 `reasoning_effort: high`. Use `reasoning_effort: xhigh` only for a focused retry
 when material evidence remains incomplete or contradictory. Never use a full-
 history fork or omit the reasoning effort.
@@ -88,20 +86,6 @@ Preserve successful evidence when another lane is `Incomplete` or `Failed`.
 Narrow, split, retry, use a focused `xhigh` escalation, inspect the exact dispute,
 continue when immaterial, or return `Blocked` according to impact. Never resolve
 conflicting reports by majority vote.
-
-Infrastructure failures are not reasoning-sensitive. If a worker's shell or
-tool runner fails before the command starts with a sandbox or session setup
-error such as `helper_unknown_error: setup refresh had errors`, do not retry that
-lane at `xhigh`, try alternate shells or CUA, or send cross-thread requests.
-Instead, retry the same exact command once through the host's approval path,
-when available. Do not change, combine, or broaden the command. This is a
-runner-recovery attempt, not permission to expand the lane. If approval is
-unavailable or denied, or that one retry fails, return `Failed`. Preserve
-successful lanes and use one bounded parent-side fallback for the same read-only
-inspection or prescribed validation. Ordinary command failures are evidence;
-never rerun them through escalation.
-Report the environment limitation once; return `Blocked` only if the parent
-fallback also cannot establish material evidence.
 
 Discard a worker's attempted decision, implementation, canonical artifact,
 recursive delegation, or result based on durable repository mutation and treat
