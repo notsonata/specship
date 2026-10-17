@@ -8,6 +8,7 @@ import { Store } from './state.js';
 import { Runner } from './runner.js';
 import { serveSpec } from './mcp.js';
 import { interruptCommand } from './hooks.js';
+import { preparePrivateStorage } from './private-storage.js';
 
 function flags(args: string[]): Map<string, string> {
   const result = new Map<string, string>();
@@ -34,7 +35,8 @@ async function setup(args: string[]): Promise<void> {
     throw new Error('setup requires --profile NAME --model provider/model --executable ABSOLUTE_PATH --max-dispatch-seconds N --delivery-margin-seconds N [--variant low|medium|high] [--shell ABSOLUTE_PATH]');
   }
   const configPath = join(workspace, '.specship', 'config.json');
-  await mkdir(join(workspace, '.specship'), { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  await preparePrivateStorage(workspace);
   let config: any;
   try {
     config = await readConfig(configPath);
@@ -43,7 +45,7 @@ async function setup(args: string[]): Promise<void> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     config = { ship: { default_profile: profileName, profiles: { [profileName]: { harness: 'opencode', model, executable, options: {...(variant?{variant}:{}),...(shipShell?{shell:shipShell}:{})} } } }, limits: { max_dispatch_seconds: max, delivery_margin_seconds: margin } };
-    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { flag: 'wx' });
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
     process.stderr.write(`Created reviewable configuration ${configPath}\n`);
   }
   const cliPath = fileURLToPath(import.meta.url);

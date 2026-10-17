@@ -2,13 +2,17 @@ import { createServer, type Server, type ServerResponse } from 'node:http';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Store, RunState } from './state.js';
 import { Report } from './contracts.js';
-import { materializeArtifacts } from './artifacts.js';
+import { materializeArtifacts, verifyArtifact, MAX_ARTIFACT_BYTES } from './artifacts.js';
+import { z } from 'zod';
+
+const DecisionRequest = z.object({ request_id: z.string().min(1), blocker: z.string().min(1), decision: z.string().min(1), evidence: z.array(z.string()), attempts: z.array(z.string()), image_artifact_ids: z.array(z.string()).optional() }).strict();
+type Answer = { text: string; images: Array<{ mime: string; name: string; data: Buffer }> };
 
 export class CallbackHub {
   private server?: Server;
   private capability = randomBytes(32).toString('hex');
   private base = '';
-  private answer?: (value: { text: string; images: Array<{ mime: string; name: string; data: Buffer }> }) => void;
+  private answer?: { id: string; promise: Promise<Answer>; resolve: (value: Answer) => void; reject: (error: Error) => void };
   private waiting = new Set<ServerResponse>();
   constructor(private store: Store, private state: RunState, private stopExecution: (reason: string) => Promise<boolean> = async () => false, private deliveryMarginMs=120_000) {}
   get token(){return this.capability;}
@@ -24,24 +28,47 @@ export class CallbackHub {
         for await (const chunk of req) {size+=chunk.length;if(size>1_000_000)throw new Error('Callback request exceeds 1 MB');chunks.push(Buffer.from(chunk));}
         const body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
         if (req.url === '/ask_spec') {
-          if(this.answer)throw new Error('A decision callback is already pending');
-          if(typeof body.request_id!=='string'||!body.request_id||typeof body.blocker!=='string'||typeof body.decision!=='string'||!Array.isArray(body.evidence)||!Array.isArray(body.attempts))throw new Error('Invalid decision request');
+          const question = DecisionRequest.parse(body);
+          const key = JSON.stringify(question.request_id);
+          const fingerprint = JSON.stringify(question);
+          const records = this.state.decision_callbacks ??= {};
+          const recorded = records[key];
+          if (recorded && (recorded.activity_id !== this.state.activity_id || recorded.fingerprint !== fingerprint)) throw new Error('Decision request ID was reused with changed input or a different activity');
+          if (recorded?.answer) {
+            await this.store.save(this.state);
+            this.sendAnswer(res, await this.replayAnswer(recorded.answer));
+            return;
+          }
+          if (this.answer && this.answer.id !== question.request_id) throw new Error('A decision callback is already pending');
           this.waiting.add(res);
-          const response = new Promise<{ text: string; images: Array<{ mime: string; name: string; data: Buffer }> }>(resolve => { this.answer = resolve; });
-          this.state.pending = { kind: 'question', id: body.request_id ?? cryptoId(), body };
-          await this.store.emit(this.state, 'decision_required', this.state.pending);
-          const answer = await response;
-          if (!res.destroyed) res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
-            text: answer.text,
-            images: answer.images.map(image => ({ mime: image.mime, name: image.name, data: image.data.toString('base64') })),
-          }));
-          this.waiting.delete(res);
+          res.once('close', () => this.waiting.delete(res));
+          let response = this.answer?.promise;
+          if (!this.answer) {
+            const pending = this.state.pending as any;
+            if (recorded && (pending?.id !== question.request_id || !['question', 'deferred'].includes(pending.kind))) throw new Error('Decision request is no longer pending');
+            if (!recorded && (pending && ['question', 'permission', 'deferred', 'report', 'recovery_review'].includes(pending.kind) || ['paused', 'cancelled', 'completed', 'failed', 'awaiting_review'].includes(this.state.lifecycle))) throw new Error('This activity cannot accept a new decision callback');
+            let resolve!: (value: Answer) => void;
+            let reject!: (error: Error) => void;
+            const promise = new Promise<Answer>((yes, no) => { resolve = yes; reject = no; });
+            void promise.catch(() => {});
+            this.answer = { id: question.request_id, promise, resolve, reject };
+            response = promise;
+            if (!recorded) {
+              records[key] = { activity_id: this.state.activity_id!, brief_version: this.state.brief_version, fingerprint };
+              this.state.pending = { kind: 'question', id: question.request_id, body: question };
+              try { await this.store.emit(this.state, 'decision_required', this.state.pending); }
+              catch (error) { this.answer?.reject(error as Error); this.answer = undefined; throw error; }
+            }
+          }
+          try { this.sendAnswer(res, await response!); }
+          finally { this.waiting.delete(res); }
         } else if (req.url === '/report_result') {
+          if (this.answer || ['question', 'permission', 'deferred', 'recovery_review'].includes((this.state.pending as any)?.kind)) throw new Error('Resolve the pending decision before reporting a result');
           const parsed = Report.safeParse(body);
           if (!parsed.success) throw new Error('Invalid report schema');
           if(this.state.activity_kind==='explore'&&'status'in parsed.data||this.state.activity_kind!=='explore'&&!('status' in parsed.data))throw new Error('Report does not match the current activity kind');
           const report='artifacts'in parsed.data&&parsed.data.artifacts?{...parsed.data,artifacts:await materializeArtifacts(this.store.workspace,parsed.data.artifacts)}:parsed.data;
-          if(this.state.report){if(JSON.stringify(this.state.report)!==JSON.stringify(report))throw new Error('A report is already submitted for this activity');if(!res.destroyed)res.writeHead(200).end('{}');return;}
+          if(this.state.report){if(JSON.stringify(this.state.report)!==JSON.stringify(report))throw new Error('A report is already submitted for this activity');await this.store.save(this.state);if(!res.destroyed)res.writeHead(200).end('{}');return;}
           this.state.report = report;
           this.state.report_id = randomUUID();
           this.state.pending = { kind: 'report', id: this.state.report_id };
@@ -69,7 +96,7 @@ export class CallbackHub {
           })().catch(() => {});
         } else res.writeHead(404).end();
       } catch (error) {
-        if (!res.destroyed) res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: error instanceof Error ? error.message : 'invalid request' }));
+        if (!res.destroyed && !res.writableEnded) res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: error instanceof Error ? error.message : 'invalid request' }));
       }
     });
     await new Promise<void>((resolve, reject) => this.server!.once('error', reject).listen(0, '127.0.0.1', resolve));
@@ -78,12 +105,32 @@ export class CallbackHub {
     await this.refreshDescriptor();
   }
   async refreshDescriptor():Promise<void>{await this.store.writeCallbackDescriptor(this.state.run_id,{url:this.base,capability:this.capability,deadline:this.state.deadline,delivery_margin_ms:this.deliveryMarginMs,callback_timeout_ms:Math.max(1,(this.state.deadline??Date.now())-Date.now()+this.deliveryMarginMs)});}
-  waitQuestion():Promise<unknown>{return new Promise(resolve=>{this.answer=(v)=>resolve(v);});}
+  private sendAnswer(res: ServerResponse, answer: Answer): void {
+    if (!res.destroyed && !res.writableEnded) res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ text: answer.text, images: answer.images.map(image => ({ mime: image.mime, name: image.name, data: image.data.toString('base64') })) }));
+  }
+  private async replayAnswer(answer: { text: string; artifacts: unknown[] }): Promise<Answer> {
+    const images = [];
+    for (const ref of answer.artifacts) {
+      const verified = await verifyArtifact(this.store.workspace, ref);
+      images.push({ mime: verified.reference.mime, name: verified.reference.id, data: verified.bytes });
+    }
+    if (images.reduce((sum, image) => sum + image.data.length, 0) > MAX_ARTIFACT_BYTES) throw new Error('Saved decision images exceed callback limit');
+    return { text: answer.text, images };
+  }
+  recordAnswer(requestId: string, text: string, artifacts: unknown[], originalQuestion: unknown): void {
+    const question = DecisionRequest.parse(originalQuestion);
+    if (question.request_id !== requestId) throw new Error('Decision answer does not match its original request');
+    const records = this.state.decision_callbacks ??= {};
+    const key = JSON.stringify(requestId);
+    const record = records[key] ??= { activity_id: this.state.activity_id!, brief_version: this.state.brief_version, fingerprint: JSON.stringify(question) };
+    if (record.activity_id !== this.state.activity_id || record.fingerprint !== JSON.stringify(question)) throw new Error('Decision answer belongs to a different request');
+    const answer = { text, artifacts };
+    if (record.answer && JSON.stringify(record.answer) !== JSON.stringify(answer)) throw new Error('Decision request already has a different durable answer');
+    record.answer = answer;
+  }
   async release(answer: string, images: Array<{ mime: string; name: string; data: Buffer }>): Promise<void> {
-    this.state.pending = { ...(this.state.pending as object), kind: 'answer', answer };
-    await this.store.save(this.state);
     if (!this.answer) throw new Error('No active callback is waiting');
-    const resolve = this.answer; this.answer = undefined;
+    const { resolve } = this.answer; this.answer = undefined;
     resolve({ text: answer, images });
   }
   async stop(reason: string): Promise<boolean> {const confirmed=await this.stopExecution(reason);if(confirmed)this.detachPending();return confirmed;}
@@ -91,11 +138,10 @@ export class CallbackHub {
     for (const response of this.waiting) {
       if (!response.destroyed) response.writeHead(503, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'runner stopped; decision remains unresolved' }));
     }
-    this.waiting.clear(); this.answer = undefined;
+    this.waiting.clear(); this.answer?.reject(new Error('Runner stopped; retry the exact decision request after recovery')); this.answer = undefined;
   }
   async close(): Promise<void> {
     this.detachPending();
     if (this.server) await new Promise<void>(resolve => this.server!.close(() => resolve()));
   }
 }
-function cryptoId():string{return randomUUID();}

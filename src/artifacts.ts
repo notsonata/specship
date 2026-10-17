@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
+import { lstat, readFile, realpath, rename, writeFile } from 'node:fs/promises';
 import { relative, resolve, sep } from 'node:path';
 import { Artifact } from './contracts.js';
+import { preparePrivateStorage, privateDirectory } from './private-storage.js';
 
 export const MAX_ARTIFACT_BYTES = 5_000_000; // Leaves room for base64 and JSON framing under the 8 MB callback response cap.
 const signatures: Record<string, (bytes:Buffer)=>boolean> = {
@@ -22,7 +23,7 @@ export async function verifyArtifact(root:string,input:unknown):Promise<{referen
   checkBytes(reference.mime,bytes);return {reference,bytes};
 }
 export async function materializeArtifacts(root:string,inputs:unknown[]=[]):Promise<Array<ReturnType<typeof Artifact.parse>>>{
-  const workspace=await realpath(root);const directory=resolve(workspace,'.specship','artifacts');await mkdir(directory,{recursive:true});const output=[];let aggregate=0;
+  const workspace=await realpath(root);await preparePrivateStorage(workspace);const directory=resolve(workspace,'.specship','artifacts');await privateDirectory(directory);const output=[];let aggregate=0;
   if((await lstat(directory)).isSymbolicLink()||await realpath(directory)!==directory)throw new Error('Artifact store must be a real directory inside the workspace');
   for(const input of inputs){
     const value=input as any;let bytes:Buffer;let source:string;

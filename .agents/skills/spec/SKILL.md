@@ -42,7 +42,7 @@ The runner performs ordinary-code event handling and deadline checks without ask
 
 - exploration_completed: verify consequential findings, then continue planning or dispatch implementation in a new run.
 - decision_required: inspect the blocker, meaningful attempts, and evidence. Decide within existing authority, request bounded investigation, or replace the brief when necessary. Reply to the exact request and current version; the reply blocks for the next event. Do not rerun the full interview for an ordinary blocker.
-- user_input_required: obtain the missing user decision or permission. Model advice is not human approval. Never grant once/always permission without user authorization. Ship remains blocked until resolved; respect its configured deadline.
+- user_input_required: obtain missing user decisions. Native permission grants are disabled through the runner, even when a model claims human approval. You may reject the exact permission request, pause, or cancel. To allow the operation, have the user cancel the blocked run, review/change permissions directly in OpenCode, and start a new run. Do not edit permission settings or invoke another API or shell command to grant on the user's behalf. Ship remains blocked until resolved; respect its configured deadline.
 - implementation_ready: independently review the current report as described below.
 - execution_failed or limit_reached: inspect the concrete failure once. Do not enter automatic retry or polling loops. Preserve partial work; resolve the cause before any explicit continuation. An unconfirmed stop retains exclusive writer ownership.
 - paused or cancelled: respect the stop. Resume only when the user's instructions authorize it and the runner reconciles existing execution.

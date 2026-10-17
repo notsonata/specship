@@ -1,48 +1,111 @@
-﻿# Specship
+# Specship
 
-Plan in your Codex chat. Let a configured workhorse implement. Review the evidence and ship.
+**Plan with your best model. Build with a cheaper one. Stay in the same chat.**
 
-Specship has two skills and a local MCP runner:
+Specship splits AI coding into two jobs: **Spec** works out what to build with you, and **Ship** writes and tests the code. Spec checks the result and sends back a focused correction if something is wrong.
 
-- **Spec** plans with you, delegates exploration, decides consequential blockers, and independently accepts the result.
-- **Ship** implements a compact brief, handles routine debugging and testing, and reports evidence.
-- **The runner** launches the Ship harness, delivers callbacks to the same Codex conversation, and stores enough state to stop and recover safely.
+The idea is to spend your strongest model's time on decisions that matter, while a cheaper coding model handles the implementation. Both models still use your normal accounts and usage limits; savings depend on the models and the task.
 
-Spec is whichever model you invoke `$spec` on. There is no separate Spec model setting or runner chat interface. OpenCode is the first Ship adapter; named profiles select its provider/model and reasoning variant. Further harnesses use the adapter contract after passing the same checks.
+You talk to Spec in the **Codex app or Codex CLI**. Spec launches Ship through **OpenCode** automatically, so you don't have to copy plans and results between chats.
 
-**Status:** redesign preview. Tested on Windows with Node 24.19.0, Codex 0.162.0-alpha.17.2, and OpenCode 1.18.30. Portability fixes and macOS setup instructions are included; native macOS execution and live Codex/OpenCode integration on macOS remain unverified.
+> **Preview:** this version lives on the `redesign` branch. Windows has been tested. macOS setup is included, but live testing on a Mac is still pending. OpenCode **1.18.30** is currently required.
 
-## Setup
+## Let your AI agent set it up
 
-Clone this repository, install the locked dependencies, and build:
+Give an agent that can run terminal commands and edit local files this prompt. Replace the project path with the folder where you want to use Specship:
 
-```powershell
-npm ci
-npm run build
+```text
+Install and configure Specship for my project at <absolute project path>.
+
+Use https://github.com/notsonata/specship/tree/redesign and read its README
+in full. Use the redesign branch, not the default branch.
+
+Check my OS and installed tools, then follow the manual setup in the README.
+Keep the Specship checkout at a stable location outside my project. Build
+the runner, install the spec and ship skills into my project, and merge the
+generated Codex configuration and Interrupt hook without overwriting my
+existing settings or skills. Add .specship/ to my project's .gitignore.
+
+Ask me which available OpenCode provider/model, reasoning effort, and
+assignment time limit to use if I haven't specified them. Keep Spec as
+the model in my Codex chat.
+
+Verify the build and configuration. Leave account sign-in and Codex hook
+trust to me, explain any reload needed, and don't run a paid model test
+unless I ask. Tell me what changed and how to start with $spec.
 ```
 
-Node 22 or newer is required; Node 24 is the tested runtime. Install OpenCode separately and authenticate through OpenCode's normal interface. Specship uses that authentication; it does not store provider keys or manage model sign-in.
+The agent can do the file and configuration work. You'll still need to sign in to your model provider and approve the stop hook in Codex. There isn't a one-command installer yet; the prompt walks the agent through the setup below.
 
-### Windows
+## Use it
 
-Generate setup for your target repository, choosing explicit limits and the actual OpenCode executable:
+Open your project in Codex, choose the model you want to plan with, and type:
 
-```powershell
-node dist/cli.js setup --workspace C:\Projects\my-app --profile luna --model openai/gpt-6-luna --variant high --executable C:\path\to\opencode.exe --shell C:\Windows\System32\cmd.exe --max-dispatch-seconds 240 --delivery-margin-seconds 120
+```text
+$spec Add pagination to the search results. Keep the existing filters working.
 ```
 
-### macOS (live verification pending)
+That's the entry point. You don't need to launch Ship yourself.
 
-Use the same checkout and build commands on the Mac, with Node/npm, Git, and the pinned OpenCode 1.18.30 installed. Authenticate using OpenCode's normal interface. Run setup in a terminal on that Mac so it records the local Node and OpenCode executable paths:
+1. **Work out the plan.** Spec inspects the relevant code and asks about decisions that need your input. It can delegate investigation, then verify the important findings before planning.
+2. **Hand off a short brief.** Spec tells Ship the intended outcome, boundaries, and what must pass. There is no required folder of planning documents.
+3. **Build and test.** Ship implements the change and handles routine debugging. If it needs a consequential decision, it asks Spec and waits for an answer in the same Codex conversation.
+4. **Check and finish.** Spec reviews the report, inspects important changes, and independently checks acceptance. It requests a correction when there's a concrete defect and stops when the agreed work is done.
+
+While Ship works, Spec waits for a result or a decision to make. It doesn't repeatedly ask for status. The local **runner** is the small program that launches Ship, carries messages between them, and saves progress for recovery.
+
+**Spec is whichever model you're using when you invoke `$spec`.** Pick a stronger model when the planning warrants it. Ship's model and reasoning effort are configured separately.
+
+## Manual setup
+
+You'll need:
+
+| Tool | Requirement |
+| --- | --- |
+| Codex | App or CLI with local skills, MCP tools, and Interrupt hooks. Tested with `0.162.0-alpha.17.2`. |
+| Node.js and npm | Node 22 or newer; Node 24 is the tested version. |
+| Git | For cloning Specship; recommended for the project you're changing too. |
+| OpenCode | **1.18.30**, authenticated with access to your chosen Ship model. Other versions are currently rejected. |
+
+MCP is the connection that lets Codex call the runner. The Interrupt hook lets Codex tell the runner to stop Ship when you interrupt the chat.
+
+### 1. Download and build
+
+Run these commands in a folder where you keep tools, outside the project you want Ship to edit:
 
 ```sh
-cd "/path/to/specship"
+git clone --branch redesign https://github.com/notsonata/specship.git
+cd specship
 npm ci
 npm run build
+```
 
+Keep this checkout in place: Codex will use its built runner. Specship uses OpenCode's existing provider authentication; it doesn't manage sign-in or store provider keys for you.
+
+### 2. Configure your project
+
+Run setup from the Specship checkout. Replace the project path, OpenCode executable path, and model with your own values. Model IDs use `provider/model` format; the Luna model below is an example, not a requirement. Use a supported effort level, or omit `--variant high` to keep the model's default.
+
+**Windows (PowerShell)**
+
+```powershell
+node dist/cli.js setup `
+  --workspace "C:\Projects\my-app" `
+  --profile workhorse `
+  --model openai/gpt-6-luna `
+  --variant high `
+  --executable "C:\path\to\opencode.exe" `
+  --shell "C:\Windows\System32\cmd.exe" `
+  --max-dispatch-seconds 240 `
+  --delivery-margin-seconds 120
+```
+
+**macOS (live testing pending)**
+
+```sh
 node dist/cli.js setup \
   --workspace "/Users/you/Projects/my-app" \
-  --profile luna \
+  --profile workhorse \
   --model openai/gpt-6-luna \
   --variant high \
   --executable "$(command -v opencode)" \
@@ -51,64 +114,53 @@ node dist/cli.js setup \
   --delivery-margin-seconds 120
 ```
 
-`command -v opencode` must resolve to the absolute installed executable; supply that path directly if your terminal uses an alias or function. The example explicitly selects `/bin/sh` for Ship. You can choose another absolute shell executable or omit `--shell` to preserve OpenCode's configured shell. The example limits are configurable, not built-in defaults.
+The executable must be an absolute path. On macOS, if `command -v opencode` returns an alias or function, use the actual installed executable path instead. Generate setup separately on each machine so its paths and stop command match the OS.
 
-### Register with Codex (both platforms)
+The example gives each Ship assignment **240 seconds**, plus **120 seconds** for delivering the result before Codex's tool timeout. Choose limits appropriate to your work; these are example values, not defaults or a spending cap. The assignment deadline also continues while Ship waits for a decision.
 
-This creates `.specship/config.json` in the target repository and prints reviewable `codex_toml` and `hooks_json` registrations. It preserves existing configuration and does not change Codex settings or trust hooks automatically. Existing setup arguments must match the selected profile and limits; edit your configuration explicitly to change them.
+Setup creates `<your-project>/.specship/config.json` and prints two configuration entries. It does **not** install them into Codex automatically. If configuration already exists, setup preserves it and requires matching arguments; edit the file to change your settings.
 
-Use the output generated on each machine rather than copying Windows paths or its PowerShell hook onto a Mac. On macOS setup emits a POSIX command with each argument quoted, including paths containing spaces or apostrophes; Windows retains its encoded PowerShell launcher. The MCP namespace and timeout settings are the same.
+### 3. Connect Codex
 
-Merge the printed MCP registration into the target repository's `.codex/config.toml`. Preserve unrelated tables and any existing namespace entries. The essential settings are:
+In the project you want to work on:
+
+1. Merge the printed `codex_toml` text into `.codex/config.toml`. Decode the JSON string into normal TOML text; don't paste the surrounding JSON or literal `\n` escapes. Preserve existing tables and settings.
+2. Merge the printed `hooks_json` object into `.codex/hooks.json`, preserving other hooks.
+3. Copy Specship's `.agents/skills/spec` and `.agents/skills/ship` directories into your project's `.agents/skills/` directory. Preserve their contents, including `agents/openai.yaml`, and check for existing skills with the same names before copying. Codex discovers project skills from this location. See [Codex skill locations](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills).
+4. Add `.specship/` to your project's `.gitignore`. That folder contains local settings, saved runs, artifacts, and private connection information.
+5. In Codex CLI opened at your project, use `/hooks` to review and trust the generated Interrupt hook. Codex requires review of new or changed hooks. See [hook trust instructions](https://learn.chatgpt.com/docs/hooks#review-and-trust-hooks).
+6. Reload the MCP connection or restart Codex so it picks up the configuration. Confirm that `$spec` is available and the Specship tools are connected.
+
+**Keep these generated MCP settings:**
 
 ```toml
 [features.code_mode]
 direct_only_tool_namespaces = ["mcp__specship"]
-
-[mcp_servers.specship]
-command = "<absolute Node executable>"
-args = ["<absolute path to specship/dist/cli.js>", "serve", "<absolute target workspace>"]
-tool_timeout_sec = 360
 ```
 
-The Codex timeout must cover the configured activity limit plus delivery margin. Direct tool exposure matters: a yielding code-mode wrapper caused additional model generations during the compatibility test. Increasing the timeout alone did not prevent that.
+If you already have that table or list, merge the entry rather than replacing it. Also keep the generated `[mcp_servers.specship]` registration, including its absolute paths and `tool_timeout_sec`.
 
-Merge the printed Interrupt entry into `.codex/hooks.json`, preserving other hooks. In Codex CLI at that repository, open `/hooks` and review/trust the exact command. Reload the MCP connection in the app/CLI. New or changed hook definitions require normal Codex trust review. The hook is needed because interrupting a Codex turn did not send MCP cancellation in the measured host.
+Direct tool access is what allows Spec to wait quietly. In compatibility checks, wrapping these tools in a yielding code-mode call caused extra model activity. The Codex timeout must be at least the assignment limit plus the delivery margin: **360 seconds** for the examples above.
 
-The repository's `.agents/skills/spec` and `.agents/skills/ship` are the skill packages. In another project, install those two directories through your host's normal local skill installation mechanism. Keep the runner checkout available at the absolute path printed by setup.
+Now open the project in Codex and try `$spec` with a small task. This will use your normal model allowance.
 
-Add `.specship/` to the target repository's `.gitignore`. It holds local configuration, execution state, retained artifacts, and private reconnect data. Do not commit that directory or share private adapter/callback descriptors.
+## Change Ship's model or effort
 
-## Workflow
-
-In the Codex app or CLI:
-
-```text
-$spec Add pagination to the search results, preserving the current filters.
-```
-
-Spec investigates relevant facts and can delegate bounded read-only exploration. It verifies consequential findings, asks one useful question at a time with a recommendation when decisions remain, and settles a short brief. An already clear, authorized request needs no ritual reapproval.
-
-Spec dispatches Ship automatically. One MCP call stays blocked while Ship works. Routine progress, heartbeat checks, shell polling, and speculative supervisor work do not wake the Spec model. Ship can call `ask_spec` immediately for a consequential blocker; the pending call returns that question to this same chat. Spec's answer is durable, releases Ship, and blocks until the next meaningful event.
-
-When Ship finishes, Spec reviews its report and important implementation evidence. A concrete defect gets a focused correction in the same native Ship session. Once the agreed criteria pass, Spec records acceptance and reports the result. There are no mandatory PLAN/RESULTS files or immutable review rounds.
-
-`$ship` also works directly with a supplied brief. Without a runner-associated Spec conversation, it returns consequential blockers to you and stops; it cannot promise automatic callbacks.
-
-## Ship profiles
-
-Edit the target repository's `.specship/config.json` to configure named choices:
+Edit `.specship/config.json` in the project you're working on. For example:
 
 ```json
 {
   "ship": {
-    "default_profile": "luna",
+    "default_profile": "workhorse",
     "profiles": {
-      "luna": {
+      "workhorse": {
         "harness": "opencode",
         "model": "openai/gpt-6-luna",
         "executable": "C:/path/to/opencode.exe",
-        "options": { "variant": "high", "shell": "C:/Windows/System32/cmd.exe" }
+        "options": {
+          "variant": "high",
+          "shell": "C:/Windows/System32/cmd.exe"
+        }
       }
     }
   },
@@ -119,57 +171,63 @@ Edit the target repository's `.specship/config.json` to configure named choices:
 }
 ```
 
-Profiles apply only to Ship. The default is used unless Spec selects another configured name. The first adapter accepts `low`, `medium`, or `high` reasoning variants and validates availability against the selected OpenCode model. An optional absolute `shell` executable configures only the runner-owned harness; omission preserves OpenCode's shell setting. The Windows stop/resume check passed with explicit `cmd.exe`; the measured PowerShell path failed to produce verifiable Node output. Unknown harnesses/options fail explicitly. There is no automatic model fallback or upgrade. Config changes do not change an already running or recovered activity's saved profile.
+Use your local executable paths; on macOS, the shell example is `/bin/sh`. The shell setting is optional. Explicit `cmd.exe` is the tested Windows choice; the PowerShell harness check failed to produce verifiable Node output.
 
-Only OpenCode 1.18.30 is currently accepted by the production adapter. Exploration denies editing, shell execution, and delegation through the harness's tool policy; this is not an OS sandbox. Implementation follows existing OpenCode permissions, with native questions/delegation disabled in favor of the Spec callback. Permission requests require user authorization.
+- **`model`** selects Ship's provider and model in OpenCode.
+- **`variant`** selects `low`, `medium`, or `high` reasoning effort, when supported by that model. You can omit it to use the model's default.
+- **`profiles`** lets you save multiple choices. `default_profile` selects the usual one; you can ask Spec to use another configured profile by name.
+- **`limits`** controls assignment time and result delivery. If you change these values, update Codex's `tool_timeout_sec` to cover their sum.
 
-## Brief, reports, and media
+Restart the MCP connection after changing configuration. Existing runs keep their saved profile. Specship doesn't silently upgrade the model or fall back to another one. Additional harnesses are planned; **OpenCode is the only supported Ship harness today**.
 
-The brief contains `outcome`, observable `acceptance`, `boundaries`, settled `decisions`, `verified_context`, `validation`, and optional `artifacts`. It is a compact statement of intent, not an exhaustive task/file matrix. Ship owns routine implementation judgment.
+## Stops, reconnects, and images
 
-Exploration reports contain findings, checks performed, and uncertainties. Implementation reports contain changes, acceptance evidence, actual validation, deviations, remaining issues, and a review status. A report or process exit alone cannot mark work accepted.
+**Permissions:** the runner cannot grant new OpenCode permissions through Spec, even if a reply says the user approved. Spec can reject a request, pause, or cancel. To allow an operation, cancel the blocked run, review/change the permissions yourself in OpenCode, then start a new run. Existing OpenCode permissions still apply; Specship is not an OS sandbox.
 
-Initial media support is workspace-local PNG/JPEG input, with a combined 5,000,000-byte limit per activity to fit callback framing. A local artifact needs `path`, `mime`, and `purpose`; an optional ID identifies it in questions. The runner retains original bytes by content hash, verifies supplied integrity metadata, and replays requested originals as native image content with a blocker answer. It does not silently upscale, OCR, drop an image, or switch models.
+**Stopping:** ask Spec to pause or cancel the run. The Interrupt hook is also intended to stop Ship when you interrupt Codex. The runner only confirms a stop after OpenCode confirms it is idle; an uncertain stop keeps the workspace reserved. The actual desktop Stop button with the production hook still needs live verification.
 
-Automatic access to Codex chat attachments is unverified. PDF/audio/video input is unsupported. Luna's small-image accuracy remains an observed limitation even when native delivery succeeds; Spec must independently verify important visual claims.
+**Reconnecting:** saved state lets Spec attempt to reconnect to the same Ship session, without submitting the job again. Ask it to recover the exact interrupted run. Recovery can require a decision if files changed, time expired, or the original session is unavailable. Partial edits are preserved. Don't delete locks or start a competing run to get around a recovery error.
 
-## Stopping and recovery
+**Images:** Ship can receive PNG and JPEG files from your project, up to 5 MB combined per assignment. Automatic access to images attached in Codex chat is unverified; use a local file path. PDF, audio, and video input aren't supported yet. Image delivery doesn't guarantee that the model reads it correctly, especially for small images.
 
-One workspace has one active writer. Stop/cancel releases ownership only after OpenCode confirms idle. An unconfirmed stop keeps the lease and returns the uncertainty. Partial edits are preserved; recovery never resets Git or deletes implementation work.
+Only one Ship writer can work in a project at a time. Git projects get automatic change checks during review and recovery; other folders still need manual change verification.
 
-Runs and events are persisted under `.specship/runs/<run-id>/`. Operations have stable IDs, current brief/report versions, exact supervisor handles, and native execution identities. Repeated or uncertain delivery must reconcile existing work rather than submit the assignment again.
+Saved decisions survive callback retries: the same request gets the same answer, including verified original image files. Reusing its ID for changed input or a later assignment is rejected.
 
-After reconnect, Spec uses `specship_wait` with the exact run, saved handle, and `recover=true`. Recovery rejects live owners, verifies profile/artifact snapshots, retains the original deadline, and reconnects to the same native session. A lost callback is answered with an explicit decision continuation after the old attempt is stopped. A missing native session or ambiguous execution returns a recovery failure rather than starting over.
+Local storage is restricted to the current user on POSIX (`0700` directories, `0600` files). Windows uses ACLs allowing the current user, SYSTEM, and Administrators. Existing state is hardened on initialization; linked storage and files owned by another user are rejected. Processes running under your own account remain trusted, including your coding agents.
 
-In Git repositories the runner records local content hashes at material events, excluding its own storage. Changed files require reconciliation after recovery and prevent accepting stale validation. These hashes do not send repository contents to Spec. Non-Git workspaces still need manual change verification. Corrupt state or a stale recovery guard fails with ownership/recovery information; never delete locks while a writer may be alive.
+## Troubleshooting
 
-The model-facing tools are `specship_dispatch`, `specship_reply`, `specship_wait`, `specship_inspect`, `specship_control`, and `specship_accept`. Inspection is for a concrete decision, review, or recovery; there is no status-polling tool. The terminal commands are just setup, MCP serving, and the internal Interrupt entry point.
+| Problem | What to check |
+| --- | --- |
+| `$spec` is missing | Check `.agents/skills/spec/SKILL.md` in your project, then restart Codex if needed. |
+| Specship tools are missing | Check the generated MCP registration, absolute paths, and that `npm run build` succeeded. Reload the connection. |
+| Spec keeps checking progress | Ensure `mcp__specship` is in `direct_only_tool_namespaces` and that the tools are exposed directly. |
+| A wait times out | Check Codex's tool timeout against the assignment limit plus delivery margin. Recover the existing run rather than dispatching it again. |
+| OpenCode version or model is rejected | Use OpenCode 1.18.30 and a provider/model and variant available in your authenticated OpenCode setup. |
+| The stop hook doesn't run | Review/trust the current hook through `/hooks`; changed commands need review again. |
 
-## Development and verification
-
-```powershell
-npm run build
-npm run check
-```
-
-`npm test` builds the production modules before exercising them, so the checks cannot silently use stale compiled code. The tests include an independent fake adapter, local HTTP/SSE protocol checks, production MCP stdio routing, state/recovery cases, and compatibility telemetry analysis.
-
-Opt-in live checks consume normal model usage:
-
-```powershell
-node scripts/check-runtime.mjs C:\path\to\opencode.exe openai/gpt-6-luna high
-node scripts/check-runtime.mjs C:\path\to\opencode.exe openai/gpt-6-luna high stop
-node scripts/check-runtime.mjs C:\path\to\opencode.exe openai/gpt-6-luna high permission
-node scripts/check-runtime.mjs C:\path\to\opencode.exe openai/gpt-6-luna high permission-bash
-```
-
-This uses an isolated fixture repository to check real implementation, callbacks, same-session correction, acceptance, exploration, confirmed interruption, and process-crash recovery. These scenarios passed on Windows. Direct MCP waits in Codex CLI and the desktop app stayed blocked for 130 seconds without additional model generations. The actual desktop Stop button with the production Interrupt hook still needs verification. Detailed evidence is retained locally under `.specship/compatibility/`.
-
-For later macOS live verification, use the installed executable rather than the Windows `.exe` path:
+## Development
 
 ```sh
+npm ci
 npm run check
-node scripts/check-runtime.mjs "$(command -v opencode)" openai/gpt-6-luna high
 ```
 
-Native macOS process shutdown/recovery, trusted Interrupt delivery, and quiet waits in the actual Codex app/CLI still need live verification. The portability checks do not establish those host behaviors.
+The check command typechecks, builds, and runs the automated tests. It doesn't call a paid model. Tests cover runner state, callbacks, recovery, MCP routing, OpenCode protocol handling, and platform-specific hook commands.
+
+GitHub Actions runs these automated checks on Windows and macOS with Node 22 and 24. CI does not launch Codex or OpenCode, authenticate providers, or perform live model tests.
+
+Opt-in live checks use your normal model allowance:
+
+```sh
+node scripts/check-runtime.mjs /absolute/path/to/opencode provider/model high
+```
+
+On Windows, use the full path to `opencode.exe`. Additional scenarios accept `stop`, `permission`, or `permission-bash` as a final argument. The permission scenarios check that model-issued grants are blocked, then cancel the run. Evidence is saved locally under `.specship/compatibility/`.
+
+Windows live checks have covered implementation, callbacks, corrections, acceptance, exploration, stopping, and crash recovery. Direct MCP waits in Codex CLI and the app stayed blocked for 130 seconds without additional model generations. Native macOS process handling, hook delivery, and quiet waits still need live checks on a Mac.
+
+## License
+
+[Apache 2.0](LICENSE)

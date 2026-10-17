@@ -9,8 +9,8 @@ class Fake {
   async validate(){}
   async start(_workspace,_profile,_kind,callback){this.callback=callback;return {session:'native-fake-session',version:'fake-1'};}
   async subscribe(){}
-  async submit(_session,operation){void fetch(`${this.callback.url}/ask_spec`,{method:'POST',headers:{authorization:`Bearer ${this.callback.capability}`,'content-type':'application/json'},body:JSON.stringify({request_id:`q-${operation}`,blocker:'Need a choice',evidence:[],attempts:[],decision:'Choose one'})});return {messageId:`m-${operation}`};}
-  async *events(_session,signal){while(!signal.aborted)await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));}
+  async submit(_session,operation){if(operation==='permission'){this.permission={id:'native-permission',permission:'bash',patterns:['node --test']};this.wake?.();}else void fetch(`${this.callback.url}/ask_spec`,{method:'POST',headers:{authorization:`Bearer ${this.callback.capability}`,'content-type':'application/json'},body:JSON.stringify({request_id:`q-${operation}`,blocker:'Need a choice',evidence:[],attempts:[],decision:'Choose one'})});return {messageId:`m-${operation}`};}
+  async *events(_session,signal){while(!signal.aborted){if(this.permission){const data=this.permission;this.permission=undefined;yield {type:'permission',data};continue;}await new Promise(resolve=>{this.wake=resolve;signal.addEventListener('abort',resolve,{once:true});});}}
   async reconcile(){return 'active';}
   async abort(){return true;}
   async reply(){}

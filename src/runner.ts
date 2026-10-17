@@ -287,24 +287,28 @@ export class Runner {
     if (state.brief_version !== input.expected_brief_version) throw new Error('Stale reply');
     const question = state.pending as any;
     if (question?.id !== input.request_id) throw new Error('Stale request ID');
+    // Native thread IDs identify the supervisor, not a human approval. No model-facing
+    // path can grant permissions, including a permission previously deferred to the user.
+    const permission = question.kind === 'permission' || state.events.some((event: any) => event.activity_id === state.activity_id && event.kind === 'user_input_required' && (event.payload?.permissionID ?? event.payload?.id ?? event.payload?.requestID) === question.id);
+    if (permission && !input.defer_to_user && input.answer !== 'reject') throw new Error('Native permission grants are disabled through Specship. The user must configure permissions directly in OpenCode; Spec may only reject, pause, or cancel.');
     if(question.kind==='report'){
       if((state.report as any)?.status!=='needs_decision')throw new Error('The current report has no pending decision; review, correct, or accept it');
       state.report=undefined;state.report_id=undefined;
     }
     if(active.waiting)throw new Error('Another supervisor wait is active for this run');
-    if(input.defer_to_user){state.pending={...question,kind:'deferred'};state.lifecycle='awaiting_user';state.supervisor!.waiting=false;const event=await this.store.emit(state,'user_input_required',{request_id:input.request_id,reason:'decision deferred to user'} ) as MaterialEvent;state.operation_ids[input.operation_id]={fingerprint,result:event};await this.store.save(state);return event;}
+    if(input.defer_to_user){state.pending={...question,kind:permission?'permission':'deferred'};state.lifecycle='awaiting_user';state.supervisor!.waiting=false;const event=await this.store.emit(state,'user_input_required',{request_id:input.request_id,...(permission?{id:input.request_id}:{}),reason:'decision deferred to user'} ) as MaterialEvent;state.operation_ids[input.operation_id]={fingerprint,result:event};await this.store.save(state);return event;}
     if (input.brief) { const parsed=Brief.parse(input.brief);state.brief={...parsed,artifacts:await materializeArtifacts(this.store.workspace,parsed.artifacts??[])};state.brief_version++; }
     if(!state.writer)await this.store.claimWriter(state.run_id);
-    if(question.kind==='permission'){
-      if(!['once','always','reject'].includes(input.answer))throw new Error('Permission answer must be once, always, or reject');
+    if(permission){
       state.handled_event_ids=[...new Set([...(state.handled_event_ids??[]),...state.events.filter((event:any)=>event.activity_id===state.activity_id).map((event:any)=>event.event_id)])];
       state.operation_ids[input.operation_id]={fingerprint,answer:input.answer};state.pending={...question,kind:'permission_answer',answer:input.answer};state.lifecycle='running';await this.store.save(state);
-       await this.adapter.resolvePermission?.(active.session,question.id,input.answer as 'once'|'always'|'reject');
+       await this.adapter.resolvePermission?.(active.session,question.id,'reject');
     } else {
     const requested = new Set<string>(question.body?.image_artifact_ids ?? []);
     const refs = ((state.brief as any)?.artifacts ?? []).filter((artifact: any) => requested.has(artifact.id));
     if (refs.length !== requested.size) throw new Error('Callback references an unknown or stale image artifact');
     const images = await this.media(this.store.workspace, refs);
+    if (question.body?.request_id === input.request_id) active.hub.recordAnswer(input.request_id, input.answer, refs, question.body);
     state.handled_event_ids=[...new Set([...(state.handled_event_ids??[]),...state.events.filter((event:any)=>event.activity_id===state!.activity_id).map((event:any)=>event.event_id)])];
     state.operation_ids[input.operation_id] = { fingerprint, activity_id:state.activity_id, operation_id:input.operation_id, status:'answer_durable', answer: input.answer };
     state.current_operation_id=input.operation_id;

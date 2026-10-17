@@ -37,7 +37,7 @@ export async function serveSpec(runner: Runner, store: Store): Promise<void> {
     return output(await runner.dispatch(args as any, caller(extra), extra.signal));
   });
   server.registerTool('specship_reply', {
-    description: 'Persist one exact answer and block until the next material event.',
+    description: 'Persist one exact decision answer and block until the next material event. Native permission requests accept reject only; human grants cannot be supplied through this tool.',
     inputSchema: { run_id: z.string(), request_id: z.string(), operation_id: z.string(), answer: z.string(), expected_brief_version: z.number().int(), supervisor_handle: z.string(), brief: z.unknown().optional(), defer_to_user: z.boolean().optional() },
   }, async (args, extra) => { await owned(runner, args.run_id, args.supervisor_handle, extra); return output(await runner.reply(args as any, caller(extra), extra.signal)); });
   server.registerTool('specship_wait', {
