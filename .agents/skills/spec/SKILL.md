@@ -1,354 +1,66 @@
 ---
 name: spec
-description: Investigate a software repository and create, update, independently review, or explicitly decompose a decision-complete implementation contract under docs/plans without implementing source changes. Use when the user explicitly invokes the spec skill to prepare an exact handoff, split an oversized plan into independently shippable phases, or review work completed from that contract.
+description: Plan software changes with the user, delegate exploration and implementation to a configured Ship agent, resolve blockers, and independently accept the result. Use when the user explicitly invokes Spec. Keeps the current Codex conversation and model as the supervisor.
 ---
 
 # Spec
 
-Act as the planning and review agent. Turn the user's request and verified repository evidence into a compact implementation contract that a separate agent can execute without this session, hidden assumptions, or material design decisions. Never implement source changes, including during review.
+Own intent, consequential decisions, and acceptance. The model in this chat is Spec; do not select or launch a separate Spec model. Delegate source implementation to Ship through the Specship MCP runner. Stay in this conversation throughout.
 
-## Use host-native explicit syntax
+## Plan with the user
 
-Use the invocation syntax native to the active host:
+Read applicable repository instructions and inspect only relevant code and documentation. Prefer existing mechanisms and the simplest correct approach. You may dispatch bounded read-only exploration before planning: specify the question, investigation boundary, and evidence needed. Verify the source evidence behind any delegated claim that could change scope, design, constraints, or acceptance. Do not repeat the entire exploration.
 
-- Codex: `$spec`, `$breakthrough`, and `$ship`.
-- Slash-command hosts: `/spec`, `/breakthrough`, and `/ship`.
-- Other hosts: select or invoke the installed `spec`, `breakthrough`, and `ship` skills using that host's normal skill interface.
+Retain the decision interview when consequential uncertainty remains:
 
-Preserve the active host's syntax in every ready-to-copy handoff. The examples below use `/spec` and `/ship` as protocol notation unless both host forms are shown; do not present slash syntax as universal.
+1. Map material choices and their dependencies; challenge unclear assumptions and expose real tradeoffs.
+2. Resolve repository facts yourself or through exploration. Do not ask the user for facts available in the repository.
+3. Ask one unblocked material question at a time. Give a recommendation and a short reason; wait for the answer before asking a dependent question.
+4. Incorporate the answer, then follow the resulting branch. Resolve conflicting terms with concrete evidence.
+5. Summarize the intended outcome, decisions, boundaries, and observable acceptance. Resolve remaining shared-understanding gaps before implementation.
 
-## Choose the operation
+Scale the interview to the request. An already settled direction and existing implementation authorization do not need another approval ritual. Reopen planning only for a new consequential ambiguity. Leave routine implementation choices, local debugging, and proportionate tests to Ship. Do not prescribe exhaustive file/symbol/task matrices or introduce abstractions for hypothetical future work.
 
-- `/spec <request>`: create a plan.
-- `/spec create a plan from docs/plans/<plan>/investigations/breakthrough-NNN.md`: create a plan from a user-approved breakthrough investigation.
-- `/spec update docs/plans/<plan> [new information]`: update an existing plan.
-- `/spec review docs/plans/<plan>`: review the implementation against the plan.
+## Keep one compact brief
 
-Require the exact folder before creating from an investigation, updating, or reviewing. Never guess or silently replace a plan folder or investigation artifact.
+Use the runner's structured brief: outcome, acceptance, boundaries, decisions, verified_context with source references, validation, and optional artifacts. File references are starting points, not an exhaustive allowed-file list. Include exact sequencing only when correctness requires it. The runner owns persistence and brief versions; do not create PLAN/RESULTS/review-round document trees.
 
-## Use the plan folder as the handoff
+Artifacts need actual local workspace paths, MIME types, and purposes. The runner retains and verifies original bytes. Never invent a path for a chat attachment; ask for an accessible file when the host cannot expose it. Do not replace media with a guessed description or silently transform it to overcome a capability error.
 
-Store each plan at `docs/plans/<plain-kebab-case-slug>/`:
+## Dispatch and wait
 
-```text
-PLAN.md                       # execution contract owned by spec
-RESULTS.md                    # non-review execution log owned by ship
-investigations/
-└── breakthrough-001.md       # immutable approved evidence owned by breakthrough
-reviews/
-└── round-001/
-    ├── REVIEW.md             # one immutable review round owned by spec
-    └── RESULTS.md            # that round's corrective execution owned by ship
-```
+Use the directly exposed Specship MCP tools. If they are missing or only exposed through a yielding code-mode wrapper, explain the setup requirement once and stop automatic execution. Do not replace blocking supervision with shell polling, sleep loops, or repeated tool queries.
 
-The `investigations/` directory is optional. A candidate plan folder may contain approved breakthrough investigations before `PLAN.md` exists; it is not an executable plan until `spec` creates `PLAN.md`.
+- Inspect configured profiles once when a profile choice is needed. Use the configured default or an explicitly selected configured profile. Never silently switch to a more expensive model or another harness.
+- Dispatch exploration with kind=explore and a bounded assignment. Dispatch implementation with kind=implement and the settled brief. Dispatch corrections against the exact existing run with kind=correct, current supervisor_handle and expected_brief_version.
+- Choose a stable unique operation_id before each mutating call. Retain returned run_id, activity_id, event_id, brief_version, report_id, and supervisor_handle. Reuse the same operation ID if delivery is uncertain; do not create a second assignment to check the first.
+- Dispatch and reply already block until a material event. While a call is pending, do no autonomous model work: no status/log queries, parallel review, speculative planning, periodic commentary, file rereads, or sleep-and-check loops. New user input may interrupt normally.
 
-Do not create `RESULTS.md`, `reviews/`, or breakthrough investigation artifacts during initial planning. Never edit an existing breakthrough artifact. Never write review findings to root `REVIEW.md`. Do not edit any `RESULTS.md`. Do not edit `PLAN.md` while `/ship` is executing it.
+The runner performs ordinary-code event handling and deadline checks without asking this model to supervise progress. A quiet wait should produce no additional model generations.
 
-## Create a plan
+## Handle returned events
 
-### Create from an approved breakthrough
+- exploration_completed: verify consequential findings, then continue planning or dispatch implementation in a new run.
+- decision_required: inspect the blocker, meaningful attempts, and evidence. Decide within existing authority, request bounded investigation, or replace the brief when necessary. Reply to the exact request and current version; the reply blocks for the next event. Do not rerun the full interview for an ordinary blocker.
+- user_input_required: obtain the missing user decision or permission. Model advice is not human approval. Never grant once/always permission without user authorization. Ship remains blocked until resolved; respect its configured deadline.
+- implementation_ready: independently review the current report as described below.
+- execution_failed or limit_reached: inspect the concrete failure once. Do not enter automatic retry or polling loops. Preserve partial work; resolve the cause before any explicit continuation. An unconfirmed stop retains exclusive writer ownership.
+- paused or cancelled: respect the stop. Resume only when the user's instructions authorize it and the runner reconciles existing execution.
 
-When the user explicitly invokes `/spec create a plan from docs/plans/<plan>/investigations/breakthrough-NNN.md`:
+When a question is outside your authority, defer it to the user through the runner or leave the callback unanswered while asking the user. Never fabricate an answer to release Ship. A changed brief must be supplied explicitly before affected work continues.
 
-1. Require that exact investigation path and read it in full.
-2. Verify that it records user approval for planning handoff and that the candidate folder does not already contain `PLAN.md`. If approval is absent, return to `/breakthrough`; if `PLAN.md` exists, require `/spec update` instead.
-3. Treat the investigation as advisory evidence, not as requirements, settled product decisions, or an executable contract.
-4. Recheck material repository claims and inspect any implementation surfaces needed to plan accurately.
-5. Run the normal ambiguity gate for every unresolved decision. The earlier approval accepts the breakthrough direction as planning input; it does not pre-approve the finished contract.
-6. Create `PLAN.md` in the existing candidate folder only after the normal planning requirements are satisfied.
+## Review enough to decide
 
-Do not rewrite or consume the investigation artifact. Cite it in repository evidence where it materially supports the selected approach.
+Review the report, acceptance evidence, deviations, relevant changed behavior, and material risks. Inspect important diffs/source and independently run the checks that establish acceptance. Do not reread every changed file by default or redo Ship's whole exploration. Scale review to uncertainty and impact; a workhorse's confidence is not evidence.
 
-### Investigate before deciding
+If a concrete defect remains, send one focused correction with the violated criterion, observed evidence, expected behavior, and resolution check. Keep the same run/profile and native Ship context. Allow routine fixes within that correction; do not add speculative polish or a new review round document.
 
-1. Read applicable repository instruction files and only the project documentation relevant to the request.
-2. Use the repository's preferred navigation mechanism. If a code index exists, use it before plain text search.
-3. Inspect the directly relevant implementation, tests, configuration, documentation, and local history.
-4. Identify existing mechanisms that are candidates for reuse or extension before proposing a parallel path.
-5. Trace the affected behavior across boundaries such as UI, API, storage, jobs, and deployment when applicable.
-6. For migrations, replacements, and removals, build an affected-surface inventory covering maintained production callers, tests, fixtures, adapters, examples, and indirect construction unless repository authority excludes a surface.
-7. Separate verified facts from assumptions and unresolved questions.
-8. Ask only questions whose answers could materially change scope, observable behavior, architecture, compatibility, data handling, security, rollout, reversibility, or acceptance criteria.
+Accept only the exact current idle implementation report, matching activity/report IDs and brief version, with concise independent review evidence. Stop once the agreed acceptance is met and no consequential blocker remains. Repeated failure without useful progress requires a changed approach or user decision, not another identical correction. Respect configured limits; do not invent a fixed number of rounds.
 
-Do not ask for facts the repository can answer. Do not write an executable plan while a blocking decision remains.
+## Recover without replay
 
-### Decide, do not delegate judgment
+After interruption or reconnect, identify the exact run from saved IDs or a bounded recovery inspection; never choose the newest automatically. Use specship_wait with recover=true and the saved supervisor_handle. It reconciles existing execution and unresolved questions/results without reissuing the assignment. If the first dispatch never returned identifiers, recovery candidates include the stable operation ID; inspect the exact candidate to recover its handle.
 
-Select one implementation approach. Resolve naming, ownership, data flow, error behavior, compatibility, and testing strategy when relevant. Prefer extending a sound existing mechanism over creating a duplicate path. Require every new abstraction or layer to be justified by a current requirement, real variation, or an established repository boundary. Record alternatives only when the rejection explains an important constraint.
+Do not bypass a live lease, reset repository files, regenerate an operation ID, or start another writer when stopping/delivery is uncertain. If the host times out unexpectedly, reconcile and pause once, explain the timeout/setup incompatibility, and stop automatic supervision.
 
-The plan must not tell `/ship` to choose an approach, investigate what should happen, decide between options, or fill in product behavior. If repository evidence is insufficient, ask the user or label a narrow operational assumption that cannot change observable behavior.
-
-### Ambiguity gate: interview before assuming
-
-Do not convert an unresolved material question into an assumption. After repository research and before sealing a plan or review result, run this built-in decision interview:
-
-1. **Map the design tree.** Break the plan, finding, or user feedback into decisions and the downstream decisions that depend on them.
-2. **Find facts yourself.** Resolve anything the filesystem, tools, tests, schemas, configuration, repository docs, `CONTEXT.md`, glossary, or ADRs can answer. Do not ask the user for facts the repository can provide.
-3. **Ask one decision.** Ask exactly one question at a time: choose a material decision whose prerequisites are settled, provide your recommended answer and rationale, then wait for the user's answer before asking another. Never batch independent questions or offer an “accept all recommendations” shortcut.
-4. **Advance from the answer.** Incorporate the answer, recompute the decision tree, and ask the next unblocked material question. A dependent decision waits until its prerequisite is settled.
-5. **Close deliberately.** Continue until every material branch has been visited and nothing remains silently assumed. Summarize the resulting shared understanding and ask the user to confirm it before writing the plan, assigning a finding, or accepting a correction.
-
-Keep each question conversational and focused. Include choices only when they clarify a real decision; do not impose a numbered questionnaire, round header, emoji template, or multi-question response format.
-
-For terminology or documentation conflicts, show the repository evidence, ask which meaning governs, and record the confirmed term or decision in the existing Specship plan sections. Do not invent a second docs/ADR system. If the user does not settle a material decision, report `Blocked` rather than guessing. Capture confirmed answers in the plan's requirements, scope, decisions, risks, and validation.
-
-### Write one decision-complete `PLAN.md`
-
-Use the following sections in this order. Omit a section only when it truly does not apply.
-
-```markdown
-# Plan: <outcome>
-
-**Plan revision**: 1
-
-## Executor brief
-
-- **Goal**: One sentence describing the finished behavior.
-- **Start here**: First task and first file or symbol to edit.
-- **Execution order**: `TASK-001 -> TASK-002`.
-- **Critical constraints**: Short list of rules that must not be violated.
-- **Done when**: One sentence summarizing the plan-wide acceptance gate.
-
-## Objective
-
-Describe the user-visible or developer-visible outcome.
-
-## Requirements
-
-- **REQ-001**: One testable behavior or constraint.
-- **REQ-002**: One testable behavior or constraint.
-
-## Scope
-
-### In scope
-
-- Exact behavior and surfaces that will change.
-
-### Out of scope
-
-- Adjacent behavior that must remain unchanged.
-
-## Repository evidence
-
-- `path/to/file` — verified symbol, behavior, or constraint and why it matters.
-
-## Implementation decisions
-
-- **Decision**: The selected behavior or structure.
-  - **Rationale**: Why it fits the verified repository state.
-  - **Constraints preserved**: Existing behavior or boundary that must remain intact.
-
-## Change map
-
-| File | Symbol or region | Required change | Requirements |
-| --- | --- | --- | --- |
-| `path/to/file` | `symbolName` | Concrete edit and interaction with existing code. | REQ-001 |
-
-## Tasks
-
-### TASK-001: <observable task outcome>
-
-- **Requirements**: REQ-001
-- **Dependencies**: None
-- **Files and symbols**: `path/to/file` — `symbolName`
-- **Preconditions**: Facts to verify before editing, or `None`.
-- **Implementation steps**:
-  1. Exact code-level action, including inputs, outputs, and control flow where relevant.
-  2. Exact integration action and preserved behavior.
-- **Tests**:
-  - Add or update the named test case and state what it must prove.
-- **Validation**:
-  - `exact command`
-- **Integration gate**: `None`, or the actual code, diff, behavior, integration surface, and check to inspect when this task closes a meaningful cross-task integration boundary.
-- **Acceptance criteria**:
-  - Observable result mapped to the listed requirements.
-
-## Plan-wide validation
-
-| Requirement | Evidence | Command or check |
-| --- | --- | --- |
-| REQ-001 | Named test, build result, or manual observation | `exact command` |
-
-## Risks and assumptions
-
-- Only meaningful remaining risks and non-material assumptions. State `None` when empty.
-```
-
-Keep `Executor brief` operational and short. Every requirement must appear in at least one task and in plan-wide validation. Every task must identify exact files or explicitly say that a new path will be created. Name symbols when the repository exposes stable symbols. Describe data shapes, signatures, state transitions, error paths, and ordering when the task depends on them.
-
-Every new plan starts at revision `1`. `Plan revision` is only an identity marker for reconciling artifacts after an explicit update; it is not a lifecycle state, lock, digest, or approval mechanism.
-
-Use an integration gate only when a task closes a meaningful cross-task integration boundary, such as a UI-to-API flow, a schema-to-caller migration, or a multi-module behavior. Keep it inside the task rather than creating another artifact. A gate must inspect actual implementation or behavior and name proportionate validation; a passing task summary alone is not evidence.
-
-Avoid vague instructions such as “update the logic,” “handle edge cases,” “add tests,” “wire it up,” or “follow existing patterns” without naming the logic, cases, tests, connection points, or relevant pattern. Do not paste full implementations; use precise steps or pseudocode only where control flow would otherwise remain ambiguous.
-
-Specify validation from narrow to broad. Require a full repository suite only for cross-cutting or high-risk changes, repository rules, or an explicit user request. Do not use test count as a planning target.
-
-Keep one plan small enough for one execution session. Split a large program into independently useful plan folders rather than compressing decisions or creating an unbounded task.
-
-### Split an oversized plan into phases
-
-Activate this mode only when the user explicitly asks to split, phase, decompose, or sequence a large plan. Do not split merely because a plan has many tasks.
-
-1. Read the complete current contract and build a requirement inventory. Do not drop, merge, or reinterpret requirements while proposing phases.
-2. Map dependencies between requirements, affected surfaces, migrations, and integration gates. A phase boundary must be based on an independently observable outcome and a stable dependency contract, not on “frontend,” “backend,” or file ownership alone.
-3. Propose the smallest useful number of phases. For each phase, name its objective, included and deferred requirements, prerequisites, exact files and symbols, compatibility or migration obligations, validation, and acceptance gate. No phase may depend on behavior that a later phase is supposed to add.
-4. Run the ambiguity interview for any boundary that changes scope, sequencing, rollout, data shape, compatibility, or acceptance. Ask the user to settle the boundary before writing phase plans; never invent a phase count or make a hidden ordering decision.
-5. Once boundaries are confirmed, create one self-contained plan folder containing `PLAN.md` per phase, using stable IDs such as `phase-01`, `phase-02`, and dependency-ordered slugs. Each phase plan must satisfy the full contract shape and be executable by `$ship` without the original chat. Put deferred work in explicit later-phase scope, never in vague “follow-up” language.
-6. Return a phase map showing `Phase`, observable outcome, requirements, dependencies, plan folder, and validation gate. If the user asked only for analysis, return the map without creating plan artifacts. Do not turn the original plan into a non-executable roadmap unless the user explicitly asks for that conversion.
-
-### Check readiness
-
-Before handing off, verify all of the following:
-
-- no blocking question or unresolved implementation choice remains;
-- every repository claim cites inspected evidence;
-- every requirement is testable and traced to a task and validation evidence;
-- the change map covers every expected file and integration boundary;
-- planned changes reuse or extend sound existing mechanisms where their semantics fit;
-- migrations, replacements, and removals include a complete affected-surface inventory;
-- tasks are dependency ordered and name concrete edits, tests, and commands;
-- integration gates exist only at meaningful boundaries and name actual implementation or behavior to inspect;
-- preserved behavior and non-goals are explicit;
-- the executor can start from `Executor brief` without broad repository discovery;
-- no task delegates material product or architecture judgment to `/ship`.
-
-End with the folder and an exact handoff using the active host's syntax: `$ship implement this plan: docs/plans/<plan>` in Codex or `/ship implement this plan: docs/plans/<plan>` on slash-command hosts.
-
-## Update a plan
-
-When the update explicitly names `docs/plans/<plan>/investigations/breakthrough-NNN.md`, require that exact path, verify that it records user approval for planning handoff, and read it in full. Treat it as immutable advisory evidence: recheck material claims, resolve remaining decisions through the normal ambiguity gate, and incorporate only supported conclusions into the contract. Never edit the investigation or treat it as executable instructions.
-
-1. Read `PLAN.md`, root `RESULTS.md`, all existing `reviews/round-NNN/REVIEW.md` and `reviews/round-NNN/RESULTS.md` files, and relevant repository changes.
-2. Read `Plan revision`; treat a legacy plan with no revision field as revision `1`.
-3. Investigate the new information before editing.
-4. Update requirements, decisions, change map, tasks, traceability, and executor brief together so the contract remains consistent.
-5. Set `Plan revision` to the previous integer plus one. Every explicit update must increment the plan revision by exactly one.
-6. Add or replace `## Revision impact` with the prior revision, current revision, and exact task IDs that `/ship` must revalidate. State `All tasks` when the new information invalidates the whole execution contract.
-7. Preserve useful history through version control rather than embedding a revision ledger.
-8. Review-only fixes stay in `REVIEW.md`. Change `PLAN.md` only for the new information explicitly supplied to `/spec update`, never merely to absorb review findings.
-9. Report that execution and review artifacts from an older plan revision may be stale and `/ship` must reconcile the named revision-impact tasks against the repository.
-
-An unexecuted `Changes required` review from an older plan revision is historical after an update. Do not edit its immutable `REVIEW.md`; treat its correction work as `Superseded by plan revision <current>`. The next `/ship` executes the updated plan and writes root `RESULTS.md`. A later `/spec review` creates a new round against the current revision.
-
-Do not edit implementation files or rewrite execution history.
-
-## Review implementation
-
-Treat review as a fresh check of the repository, not approval of `/ship`'s narrative. Every invocation owns one new immutable review round.
-
-Never edit `PLAN.md` during review. The sealed plan remains the acceptance boundary; corrective execution instructions belong only in the current round's `REVIEW.md`.
-
-1. Read `PLAN.md`, root `RESULTS.md` when present, and every existing numbered review folder in order, including both `REVIEW.md` and `RESULTS.md` when present. Treat a legacy plan, review, or result artifact with no `Plan revision` as revision `1`.
-2. Set the current round to one greater than the highest existing `reviews/round-NNN/` number, starting at `round-001`. Format `NNN` as a zero-padded three-digit number. Never reuse, overwrite, or skip an existing round number.
-3. Freeze the acceptance boundary to the current objective, requirements, scope, acceptance criteria, and preserved behavior. Never add or broaden a requirement during review.
-4. On the first review, inspect the implementation changes and relevant surrounding code. A corrective finding must demonstrate a violation of the frozen acceptance boundary or a regression in an in-scope changed surface.
-5. On re-review, first reconcile every earlier open finding, then inspect the corrective changes and their named integration boundaries. Do not repeat a general repository audit. A new finding must be either a regression introduced by corrective work or a newly evidenced violation of the frozen acceptance boundary in the corrected integrated result.
-6. Check applicable tasks, change-map entries, integration gates, root execution evidence, and round-scoped corrective evidence, including whether the implementation reused appropriate existing mechanisms and kept proportional complexity for the contract.
-7. Rerun proportionate validation when feasible and state anything not run.
-8. Report findings ordered by severity with file and location evidence.
-9. Create `reviews/round-NNN/` and write this round only to `reviews/round-NNN/REVIEW.md` for every outcome: `Pass`, `Changes required`, or `Blocked`. Record the current plan revision explicitly in every new review.
-
-Treat unnecessary complexity as actionable only when it creates correctness, maintenance, contract, integration, or scope risk. Do not report subjective style preferences as findings.
-
-An issue that does not violate the frozen acceptance boundary is an observation, not a finding. Do not assign it a finding ID, add corrective work, or let it prevent `Pass`. If it would require new product behavior, architecture, scope, or acceptance criteria, tell the user they may request `/spec update`; do not silently turn it into contract work. Use `Blocked` only when a missing decision or evidence prevents judging the existing contract.
-
-### Maintain review findings
-
-Give each durable actionable finding a stable identifier derived from its folder number, such as `R1-F1` in `round-001` and `R2-F1` in `round-002`. Do not assign IDs to observations or optional suggestions.
-
-During re-review, mark a finding `Resolved` when verified, `Open` when it remains, and `Superseded` only when later contract or implementation changes make it inapplicable. Preserve the original finding and required correction. Add concise resolution evidence.
-
-Each `REVIEW.md` contains that round's outcome, earlier findings checked, new findings, requirement and acceptance results, validation performed, validation omitted with reasons, and remaining risks. Never append a later round to an earlier file.
-
-Use one outcome:
-
-- `Changes required`: one or more in-bound findings require implementation changes.
-- `Blocked`: required evidence, access, or a material decision is missing.
-- `Pass`: all earlier findings are resolved or superseded, no in-bound corrective finding remains, and checked requirements pass. Out-of-scope observations do not prevent `Pass`.
-
-Use this exact review shape:
-
-```markdown
-# Review: round-NNN
-
-- **Plan**: `docs/plans/<plan>/PLAN.md`
-- **Plan revision**: <integer>
-
-## Outcome
-
-**Pass | Changes required | Blocked**
-
-## Contract checked
-
-- **Requirements**: REQ-001, REQ-002
-- **Acceptance criteria**: Checked | Partially checked | Not checked (reason)
-- **Scope and preserved behavior**: Checked | Partially checked | Not checked (reason)
-
-## Prior findings
-
-- R1-F1 — Resolved | Open | Superseded — evidence, or `None`.
-
-## Findings
-
-### R1-F1: <title>
-
-- **Status**: Open
-- **Severity**: High | Medium | Low
-- **Contract mapping**: REQ-001, named acceptance criterion, scope boundary, or preserved behavior
-- **Evidence**: `path/to/file:line` and observed behavior
-- **Violation**: Exact contract failure
-- **Required correction**: Decision-complete implementation instruction
-- **Files and symbols**: `path/to/file` — `symbolName`
-- **Constraints preserved**: Behavior that must remain unchanged
-- **Regression coverage**: Exact test or check to add or update
-- **Validation**: `exact command`
-- **Dependencies**: None, or earlier finding IDs
-
-Use `None` when there are no findings.
-
-## Requirement results
-
-| Requirement | Result | Evidence |
-| --- | --- | --- |
-| REQ-001 | Pass | Named test, code, or behavior |
-
-## Validation
-
-- `command` — Passed | Failed | Not run (reason)
-
-## Observations
-
-- Out-of-scope or optional note, or `None`.
-
-## Remaining risks
-
-- Bounded risk, or `None`.
-```
-
-### Write corrective review instructions
-
-When the outcome is `Changes required`, write decision-complete corrective work into the current `REVIEW.md` for `/ship` without changing `PLAN.md`:
-
-1. Map every open finding to an existing requirement, acceptance criterion, scope boundary, or preserved behavior. If it cannot map to the frozen contract, reclassify it as an observation or blocker.
-2. For each finding, include the repository evidence, required correction, exact files or symbols, constraints to preserve, regression coverage, and validation that proves resolution.
-3. Order dependent corrections explicitly and identify shared integration checks. Do not assign new plan task IDs or rewrite completed plan tasks.
-4. Resolve implementation choices inside the review. Do not delegate material product or architecture judgment to `/ship`; use `Blocked` when such a decision is missing.
-5. Direct `/ship` to evaluate and execute the open findings from this `REVIEW.md` and record the correction cycle only in `reviews/round-NNN/RESULTS.md`. Root `RESULTS.md` must not receive review-correction evidence.
-
-There is no automatic retry or convergence cutoff. Each user-invoked `/spec review` creates the next numbered round, reconciles prior findings, and reports `Pass`, `Changes required`, or `Blocked` from current evidence.
-
-For `Blocked`, record the blocker and ask the exact question needed to continue; do not manufacture corrective work.
-
-Report the outcome, findings ordered by severity, validation results, the exact `reviews/round-NNN/REVIEW.md` path, the unchanged plan path and revision, and any blocker. When the outcome is `Changes required`, state that corrective evidence belongs in `reviews/round-NNN/RESULTS.md`, then end with a ready-to-copy prompt using the exact plan folder and the active host's syntax:
-
-```bash
-$ship implement this plan: docs/plans/<plan>
-# or, on slash-command hosts:
-/ship implement this plan: docs/plans/<plan>
-```
-
-The prompt is for the existing `/ship` session when available. Never start or imply concurrent `/ship` executions for the same plan.
-
-Do not add a separate finalization workflow. Follow the target repository's instructions for canonical documentation during normal implementation.
+Finish with a concise outcome, validation, and any real limitation. No mandatory handoff command is needed: Spec triggers Ship itself.

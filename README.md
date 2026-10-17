@@ -1,378 +1,175 @@
-# Specship
+﻿# Specship
 
-Investigate a stubborn software problem when needed, turn the approved direction or an ordinary request into a precise implementation contract, execute the complete contract with one code executor, and independently review the result.
+Plan in your Codex chat. Let a configured workhorse implement. Review the evidence and ship.
 
-Specship provides four portable Agent Skills and one optional Codex companion:
+Specship has two skills and a local MCP runner:
 
-- **spec** investigates a repository and writes or reviews a decision-complete contract.
-- **spec-visual** follows the same contract protocol while adding a grounded visual review surface for plans.
-- **breakthrough** reframes a difficult or stalled software problem, tests materially different causal models, and asks for approval before handing evidence to `spec`.
-- **ship** implements one complete contract, validates every mapped requirement, and records concise evidence.
-- **spec-codex** follows `spec` while delegating bounded repository exploration, impact analysis, validation, and review evidence to Codex subagents. It never implements application changes.
+- **Spec** plans with you, delegates exploration, decides consequential blockers, and independently accepts the result.
+- **Ship** implements a compact brief, handles routine debugging and testing, and reports evidence.
+- **The runner** launches the Ship harness, delivers callbacks to the same Codex conversation, and stores enough state to stop and recover safely.
 
-The plan folder is the handoff. Planning, implementation, and review can happen in separate sessions, agents, or model providers without relying on shared chat history.
+Spec is whichever model you invoke `$spec` on. There is no separate Spec model setting or runner chat interface. OpenCode is the first Ship adapter; named profiles select its provider/model and reasoning variant. Further harnesses use the adapter contract after passing the same checks.
 
-> **Status:** Specship v0.9 is a public source preview. It is being dogfooded and is not yet presented as production-ready.
+**Status:** redesign preview. Tested on Windows with Node 24.19.0, Codex 0.162.0-alpha.17.2, and OpenCode 1.18.30. Portability fixes and macOS setup instructions are included; native macOS execution and live Codex/OpenCode integration on macOS remain unverified.
 
-## Why use Specship?
+## Setup
 
-Coding agents often lose time when an executor has to rediscover decisions that should have been settled during planning, quietly fills gaps with assumptions that change the intended result, or keeps debugging inside a problem frame that no longer explains the evidence.
+Clone this repository, install the locked dependencies, and build:
 
-Specship separates those responsibilities:
+```powershell
+npm ci
+npm run build
+```
 
-| Skill | Responsibility | Boundary |
-| --- | --- | --- |
-| spec | Investigate, resolve ambiguity, select an approach, and define observable success. | Never implements source changes. |
-| spec-visual | Do everything `spec` does and publish diagrams, file maps, wireframes, prototypes, or structured review blocks when they help. | Visual artifacts supplement `PLAN.md`; it never implements source changes. |
-| breakthrough | Discover an evidence-supported direction when a problem is genuinely difficult, unexplained, or stalled. | Never writes implementation code or a plan; the user must approve the direction before it is handed to `spec`. |
-| ship | Write the code for every task in one explicit plan and prove the mapped requirements. | Never plans, performs open-ended debugging, edits the plan, or invents decisions. |
-| spec-codex | Apply the complete `spec` protocol while offloading bounded repository evidence work to configured Codex agents. | Codex-only, explicit-only, and never implements; workers provide evidence while the parent retains every decision and canonical artifact. |
+Node 22 or newer is required; Node 24 is the tested runtime. Install OpenCode separately and authenticate through OpenCode's normal interface. Specship uses that authentication; it does not store provider keys or manage model sign-in.
 
-The result is a concrete execution contract with exact files and symbols, dependency-ordered tasks, preserved behavior, testable requirements, and proportionate validation commands.
+### Windows
 
-Specship uses a single executor and does not require a coordinator, subagent swarm, particular model, or shared conversation state. The optional `spec-codex` companion uses two bounded Codex evidence agents during specification and review; it does not parallelize implementation.
+Generate setup for your target repository, choosing explicit limits and the actual OpenCode executable:
 
-## Invocation syntax
+```powershell
+node dist/cli.js setup --workspace C:\Projects\my-app --profile luna --model openai/gpt-6-luna --variant high --executable C:\path\to\opencode.exe --shell C:\Windows\System32\cmd.exe --max-dispatch-seconds 240 --delivery-margin-seconds 120
+```
 
-Use the syntax native to your agent host:
+### macOS (live verification pending)
 
-| Host | Investigate a hard problem | Plan or review | Implement |
-| --- | --- | --- | --- |
-| Codex | `$breakthrough ...` | `$spec ...`, `$spec-codex ...`, or `$spec-visual ...` | `$ship ...` |
-| Slash-command hosts | `/breakthrough ...` | `/spec ...` or `/spec-visual ...` | `/ship ...` |
-| Other Agent Skills hosts | Select or invoke the installed `breakthrough` skill. | Select or invoke `spec` or `spec-visual`. | Select or invoke `ship`. |
+Use the same checkout and build commands on the Mac, with Node/npm, Git, and the pinned OpenCode 1.18.30 installed. Authenticate using OpenCode's normal interface. Run setup in a terminal on that Mac so it records the local Node and OpenCode executable paths:
 
-Examples in the workflow below use slash-command syntax as protocol notation. In Codex, replace `/breakthrough` with `$breakthrough`, `/spec` with `$spec`, `/spec-visual` with `$spec-visual`, and `/ship` with `$ship`. Codex users may explicitly invoke `$spec-codex` instead of `$spec` when its custom evidence agents are installed. Each skill returns ready-to-copy handoffs in the active host's native syntax.
+```sh
+cd "/path/to/specship"
+npm ci
+npm run build
 
-## How it works
+node dist/cli.js setup \
+  --workspace "/Users/you/Projects/my-app" \
+  --profile luna \
+  --model openai/gpt-6-luna \
+  --variant high \
+  --executable "$(command -v opencode)" \
+  --shell /bin/sh \
+  --max-dispatch-seconds 240 \
+  --delivery-margin-seconds 120
+```
+
+`command -v opencode` must resolve to the absolute installed executable; supply that path directly if your terminal uses an alias or function. The example explicitly selects `/bin/sh` for Ship. You can choose another absolute shell executable or omit `--shell` to preserve OpenCode's configured shell. The example limits are configurable, not built-in defaults.
+
+### Register with Codex (both platforms)
+
+This creates `.specship/config.json` in the target repository and prints reviewable `codex_toml` and `hooks_json` registrations. It preserves existing configuration and does not change Codex settings or trust hooks automatically. Existing setup arguments must match the selected profile and limits; edit your configuration explicitly to change them.
+
+Use the output generated on each machine rather than copying Windows paths or its PowerShell hook onto a Mac. On macOS setup emits a POSIX command with each argument quoted, including paths containing spaces or apostrophes; Windows retains its encoded PowerShell launcher. The MCP namespace and timeout settings are the same.
+
+Merge the printed MCP registration into the target repository's `.codex/config.toml`. Preserve unrelated tables and any existing namespace entries. The essential settings are:
+
+```toml
+[features.code_mode]
+direct_only_tool_namespaces = ["mcp__specship"]
+
+[mcp_servers.specship]
+command = "<absolute Node executable>"
+args = ["<absolute path to specship/dist/cli.js>", "serve", "<absolute target workspace>"]
+tool_timeout_sec = 360
+```
+
+The Codex timeout must cover the configured activity limit plus delivery margin. Direct tool exposure matters: a yielding code-mode wrapper caused additional model generations during the compatibility test. Increasing the timeout alone did not prevent that.
+
+Merge the printed Interrupt entry into `.codex/hooks.json`, preserving other hooks. In Codex CLI at that repository, open `/hooks` and review/trust the exact command. Reload the MCP connection in the app/CLI. New or changed hook definitions require normal Codex trust review. The hook is needed because interrupting a Codex turn did not send MCP cancellation in the measured host.
+
+The repository's `.agents/skills/spec` and `.agents/skills/ship` are the skill packages. In another project, install those two directories through your host's normal local skill installation mechanism. Keep the runner checkout available at the absolute path printed by setup.
+
+Add `.specship/` to the target repository's `.gitignore`. It holds local configuration, execution state, retained artifacts, and private reconnect data. Do not commit that directory or share private adapter/callback descriptors.
+
+## Workflow
+
+In the Codex app or CLI:
 
 ```text
-optional discovery prelude:
-/breakthrough <difficult problem>
-      -> user approves the supported direction
-      -> /spec create a plan from the approved investigation
-
-ordinary entry:
-/spec <request>
-or, in Codex with configured evidence agents:
-$spec-codex <request>
-
-either planning entry
-      |
-      v
-docs/plans/<plan>/PLAN.md (revision 1)
-      |
-      v
-/ship implement this plan: docs/plans/<plan>
-      |
-      v
-docs/plans/<plan>/RESULTS.md
-      |
-      v
-optional /spec review docs/plans/<plan>
-      |
-      v
-docs/plans/<plan>/reviews/round-001/REVIEW.md
-      |
-      v (when changes are required)
-/ship writes reviews/round-001/RESULTS.md
+$spec Add pagination to the search results, preserving the current filters.
 ```
 
-The optional breakthrough path replaces the direct `/spec <request>` entry in this diagram; it does not create a second plan. A stalled `/ship` run can also return through `/breakthrough`, user approval, and `/spec update` before execution resumes.
+Spec investigates relevant facts and can delegate bounded read-only exploration. It verifies consequential findings, asks one useful question at a time with a recommendation when decisions remain, and settles a short brief. An already clear, authorized request needs no ritual reapproval.
 
-### Optional: break through a difficult problem
+Spec dispatches Ship automatically. One MCP call stays blocked while Ship works. Routine progress, heartbeat checks, shell polling, and speculative supervisor work do not wake the Spec model. Ship can call `ask_spec` immediately for a consequential blocker; the pending call returns that question to this same chat. Spec's answer is durable, releases Ship, and blocks until the next meaningful event.
 
-Use `breakthrough` before planning when the problem is unusually difficult, prior attempts are cycling, or the current framing does not explain the evidence:
+When Ship finishes, Spec reviews its report and important implementation evidence. A concrete defect gets a focused correction in the same native Ship session. Once the agreed criteria pass, Spec records acceptance and reports the result. There are no mandatory PLAN/RESULTS files or immutable review rounds.
 
-```text
-/breakthrough Investigate why synchronization keeps creating duplicate records and find a supported direction for a new plan.
+`$ship` also works directly with a supplied brief. Without a runner-associated Spec conversation, it returns consequential blockers to you and stops; it cannot promise automatic callbacks.
+
+## Ship profiles
+
+Edit the target repository's `.specship/config.json` to configure named choices:
+
+```json
+{
+  "ship": {
+    "default_profile": "luna",
+    "profiles": {
+      "luna": {
+        "harness": "opencode",
+        "model": "openai/gpt-6-luna",
+        "executable": "C:/path/to/opencode.exe",
+        "options": { "variant": "high", "shell": "C:/Windows/System32/cmd.exe" }
+      }
+    }
+  },
+  "limits": {
+    "max_dispatch_seconds": 240,
+    "delivery_margin_seconds": 120
+  }
+}
 ```
 
-`breakthrough` performs causal investigation without editing source code or creating `PLAN.md`. It presents the evidence, proposed direction, tradeoffs, remaining uncertainty, and likely contract impact, then waits for explicit approval. Invocation alone is not approval. If the user asks for more investigation or a revision, it continues and presents the changed direction again.
+Profiles apply only to Ship. The default is used unless Spec selects another configured name. The first adapter accepts `low`, `medium`, or `high` reasoning variants and validates availability against the selected OpenCode model. An optional absolute `shell` executable configures only the runner-owned harness; omission preserves OpenCode's shell setting. The Windows stop/resume check passed with explicit `cmd.exe`; the measured PowerShell path failed to produce verifiable Node output. Unknown harnesses/options fail explicitly. There is no automatic model fallback or upgrade. Config changes do not change an already running or recovered activity's saved profile.
 
-Only after approval does it persist an immutable `docs/plans/<plan>/investigations/breakthrough-NNN.md` brief and return a ready-to-copy `spec` handoff. For a new plan, `spec` verifies the approved investigation and creates `PLAN.md` in that candidate folder. For a stalled existing plan, `spec update` incorporates the approved evidence into a new plan revision. `ship` never executes a breakthrough brief directly.
+Only OpenCode 1.18.30 is currently accepted by the production adapter. Exploration denies editing, shell execution, and delegation through the harness's tool policy; this is not an OS sandbox. Implementation follows existing OpenCode permissions, with native questions/delegation disabled in favor of the Spec callback. Permission requests require user authorization.
 
-The skill cannot select a model. When the host offers model choice, run `breakthrough` in a separate task with the strongest appropriate reasoning model available.
+## Brief, reports, and media
 
-### 1. Create the contract
+The brief contains `outcome`, observable `acceptance`, `boundaries`, settled `decisions`, `verified_context`, `validation`, and optional `artifacts`. It is a compact statement of intent, not an exhaustive task/file matrix. Ship owns routine implementation judgment.
 
-Start a planning session and describe the outcome you want:
+Exploration reports contain findings, checks performed, and uncertainties. Implementation reports contain changes, acceptance evidence, actual validation, deviations, remaining issues, and a review status. A report or process exit alone cannot mark work accepted.
 
-```text
-/spec Add organization switching to the account settings flow.
+Initial media support is workspace-local PNG/JPEG input, with a combined 5,000,000-byte limit per activity to fit callback framing. A local artifact needs `path`, `mime`, and `purpose`; an optional ID identifies it in questions. The runner retains original bytes by content hash, verifies supplied integrity metadata, and replays requested originals as native image content with a blocker answer. It does not silently upscale, OCR, drop an image, or switch models.
+
+Automatic access to Codex chat attachments is unverified. PDF/audio/video input is unsupported. Luna's small-image accuracy remains an observed limitation even when native delivery succeeds; Spec must independently verify important visual claims.
+
+## Stopping and recovery
+
+One workspace has one active writer. Stop/cancel releases ownership only after OpenCode confirms idle. An unconfirmed stop keeps the lease and returns the uncertainty. Partial edits are preserved; recovery never resets Git or deletes implementation work.
+
+Runs and events are persisted under `.specship/runs/<run-id>/`. Operations have stable IDs, current brief/report versions, exact supervisor handles, and native execution identities. Repeated or uncertain delivery must reconcile existing work rather than submit the assignment again.
+
+After reconnect, Spec uses `specship_wait` with the exact run, saved handle, and `recover=true`. Recovery rejects live owners, verifies profile/artifact snapshots, retains the original deadline, and reconnects to the same native session. A lost callback is answered with an explicit decision continuation after the old attempt is stopped. A missing native session or ambiguous execution returns a recovery failure rather than starting over.
+
+In Git repositories the runner records local content hashes at material events, excluding its own storage. Changed files require reconciliation after recovery and prevent accepting stale validation. These hashes do not send repository contents to Spec. Non-Git workspaces still need manual change verification. Corrupt state or a stale recovery guard fails with ownership/recovery information; never delete locks while a writer may be alive.
+
+The model-facing tools are `specship_dispatch`, `specship_reply`, `specship_wait`, `specship_inspect`, `specship_control`, and `specship_accept`. Inspection is for a concrete decision, review, or recovery; there is no status-polling tool. The terminal commands are just setup, MCP serving, and the internal Interrupt entry point.
+
+## Development and verification
+
+```powershell
+npm run build
+npm run check
 ```
 
-For UI-heavy, architecture-heavy, risky, or otherwise important work that benefits from visual approval, use the companion planner:
+`npm test` builds the production modules before exercising them, so the checks cannot silently use stale compiled code. The tests include an independent fake adapter, local HTTP/SSE protocol checks, production MCP stdio routing, state/recovery cases, and compatibility telemetry analysis.
 
-```text
-/spec-visual Add organization switching to the account settings flow.
+Opt-in live checks consume normal model usage:
+
+```powershell
+node scripts/check-runtime.mjs C:\path\to\opencode.exe openai/gpt-6-luna high
+node scripts/check-runtime.mjs C:\path\to\opencode.exe openai/gpt-6-luna high stop
+node scripts/check-runtime.mjs C:\path\to\opencode.exe openai/gpt-6-luna high permission
+node scripts/check-runtime.mjs C:\path\to\opencode.exe openai/gpt-6-luna high permission-bash
 ```
 
-`spec-visual` keeps `docs/plans/<plan>/PLAN.md` as the exact executor contract and adds a hosted or local Agent-Native visual review surface. The visual artifact is supplementary, so `$ship` can execute the same plan even when the visual viewer is unavailable later.
+This uses an isolated fixture repository to check real implementation, callbacks, same-session correction, acceptance, exploration, confirmed interruption, and process-crash recovery. These scenarios passed on Windows. Direct MCP waits in Codex CLI and the desktop app stayed blocked for 130 seconds without additional model generations. The actual desktop Stop button with the production Interrupt hook still needs verification. Detailed evidence is retained locally under `.specship/compatibility/`.
 
-Both planning skills include a built-in decision interview whenever a material decision, ambiguous finding, terminology conflict, or unclear visual comment remains. The interview maps a design tree, resolves facts from the repository, and asks one material decision at a time with a recommended answer. Each answer determines the next question; the planner waits for confirmation of the resulting shared understanding before writing the plan or changing its visual artifacts. No separate interview skill is required.
+For later macOS live verification, use the installed executable rather than the Windows `.exe` path:
 
-When explicitly prompted to split a large plan, either planner first returns a dependency-aware phase map, then creates one complete `PLAN.md` and (for `spec-visual`) one matching visual artifact per independently shippable phase. Each phase has its own observable outcome, requirements, dependencies, validation, and deferred scope; the planners do not split by file layer alone or invent a phase boundary without confirmation.
-
-`spec` reads repository instructions and relevant documentation, inspects the affected implementation and tests, resolves material decisions, and writes one self-contained `PLAN.md`.
-
-#### Optional: delegate evidence gathering with Spec Codex
-
-`$spec-codex` is an explicit-only Codex companion to `$spec`. It loads and follows the complete `$spec` protocol, but delegates bounded repository grunt work to the project-scoped `specship_scout` and `specship_validator` agents. The scout handles exploration, impact inventories, and bounded review checks; the validator discovers or runs parent-prescribed checks. Both pin GPT-5.6 Luna in their TOML and are dispatched with high reasoning effort and no inherited parent history. Extra-high effort is reserved for focused retries when material evidence remains contradictory or incomplete.
-
-The parent model remains responsible for user interaction, product and architecture decisions, requirements, tasks, phase boundaries, findings, corrective scope, `PLAN.md`, canonical `REVIEW.md`, and final review outcomes. Worker outputs are compact source-linked evidence, not decisions. Neither the parent nor the workers implement application changes, and workers refuse tasks that do not carry the `$spec-codex` activation marker.
-
-The resulting plan and review artifacts are ordinary Specship artifacts. `$spec`, `$spec-codex`, and `$ship` can consume them without conversion or access to worker transcripts.
-
-The plan includes:
-
-- an integer plan revision, starting at `1`;
-- a short executor brief and exact starting point;
-- testable requirement IDs;
-- explicit in-scope, out-of-scope, and preserved behavior;
-- verified repository evidence;
-- one selected implementation approach;
-- a file-and-symbol change map;
-- dependency-ordered tasks;
-- targeted tests, validation, and acceptance criteria; and
-- optional integration gates for meaningful cross-task boundaries.
-
-Planning also identifies sound mechanisms to reuse or extend. For migrations, replacements, and removals, it inventories maintained callers and affected surfaces so the executor does not mistake a narrow passing test for complete coverage.
-
-When planning finishes, `spec` returns the exact folder and a host-native handoff command.
-
-### 2. Implement the complete plan
-
-Open a separate execution session if you want a clean context, then use the handoff exactly as written:
-
-```text
-/ship implement this plan: docs/plans/organization-switching
+```sh
+npm run check
+node scripts/check-runtime.mjs "$(command -v opencode)" openai/gpt-6-luna high
 ```
 
-`ship` reads the current plan revision, reconciles existing execution evidence, and starts with the first incomplete task. Each task follows one local loop to inspect, implement, verify, self-review, fix, and reverify:
-
-```text
-inspect and inventory
-        ↓
-implement
-        ↓
-verify
-        ↓
-self-review
-        ↓
-fix and simplify
-        ↓
-reverify
-```
-
-The executor records one concise result after reaching the task's terminal state. It continues through every ready task automatically; `ship` is not a task picker and does not stop after an arbitrary subset of the plan.
-
-If a task defines an integration gate, `ship` checks the named code, diff, behavior, or meaningful integration boundary rather than trusting its own summary. At completion it inspects the integrated result for requirement coverage, regressions, appropriate reuse, scope compliance, and complexity proportional to the repository and requested outcome.
-
-Every task result and the execution summary record the plan revision. Every successful run ends with the exact host-native review command for the active plan folder.
-
-### 3. Review when the risk justifies it
-
-Run an independent review from a planning/review session:
-
-```text
-/spec review docs/plans/organization-switching
-```
-
-Review checks the repository itself, not just `RESULTS.md`. It verifies requirements, acceptance criteria, preserved behavior, changed surfaces, integration gates, validation claims, reuse, duplicate mechanisms, and concrete complexity risks.
-
-Every review creates the next numbered folder, starting with `reviews/round-001/`, and writes a canonical `REVIEW.md` containing:
-
-- the exact plan path and revision reviewed;
-- one outcome: `Pass`, `Changes required`, or `Blocked`;
-- the contract surfaces checked;
-- the status of findings from earlier rounds;
-- stable finding IDs with severity, evidence, contract mapping, required correction, affected files and symbols, preserved constraints, regression coverage, validation, and dependencies;
-- requirement-by-requirement results;
-- validation evidence, observations, and remaining risks.
-
-Review outcomes mean:
-
-- **Pass** — checked requirements pass and no in-bound corrective finding remains.
-- **Changes required** — bounded implementation defects remain; `spec` writes decision-complete corrective work into that round's `REVIEW.md` without changing `PLAN.md`.
-- **Blocked** — required evidence, access, or a material decision is missing.
-
-Findings receive stable IDs from their round, such as `R1-F1`. Later reviews resolve or supersede earlier findings without overwriting history. A corrective finding must map to the existing contract; new product behavior is an observation, not an invented requirement.
-
-After `Changes required`, run `ship` again with the same plan folder. It evaluates the active review, implements its findings, and records each finding's result in that round's `RESULTS.md`. Root `RESULTS.md` remains reserved for initial execution and non-review plan updates. A subsequent `spec review` creates the next review round.
-
-No revision or correction loop runs implicitly, and there is no correction-round cutoff. Planning, execution, review, and correction happen only when explicitly invoked.
-
-## The plan folder
-
-Each request gets one plain kebab-case folder:
-
-```text
-docs/plans/<plan>/
-├── PLAN.md                       # revisioned contract owned by spec
-├── RESULTS.md                    # non-review execution evidence owned by ship
-├── investigations/              # optional approved evidence owned by breakthrough
-│   └── breakthrough-001.md       # immutable; advisory, never executable by ship
-├── visual/                       # optional local MDX source owned by spec-visual
-│   ├── plan.mdx
-│   ├── canvas.mdx                # optional
-│   └── prototype.mdx             # optional
-└── reviews/
-    ├── round-001/
-    │   ├── REVIEW.md             # immutable review owned by spec
-    │   └── RESULTS.md            # finding-scoped corrections owned by ship
-    └── round-002/
-        ├── REVIEW.md
-        └── RESULTS.md
-```
-
-Before planning, a candidate folder may contain only `investigations/breakthrough-001.md`; it is not executable until `spec` creates `PLAN.md`. `PLAN.md` remains unchanged during execution and review. Each execution and review artifact records the plan revision it applies to. Each review correction cycle keeps its review and evidence together, so later rounds never rewrite earlier bookkeeping.
-
-Git preserves contract history. Specship does not add a lifecycle database, state machine, repository fingerprint, manifest, scheduler, or mandatory handover document.
-
-## Updating a plan
-
-Use `spec update` when new information outside a review requires the contract to change:
-
-```text
-/spec update docs/plans/organization-switching with this new requirement
-```
-
-An update is appropriate when:
-
-- the user changes or adds a requirement;
-- repository changes invalidate a plan assumption;
-- `ship` discovers a missing product or architecture decision;
-- named files or boundaries no longer match reality; or
-- new evidence requires clarified contract work before review.
-
-Each explicit update increments the plan revision by exactly one and rewrites every affected part of `PLAN.md` so the contract remains consistent. It also adds a `Revision impact` section naming the exact tasks `ship` must revalidate, or `All tasks` when the whole contract changed.
-
-Existing artifacts stay immutable. Results from an older revision may be stale and cannot prove a current-revision task complete. An unexecuted `Changes required` review from an older revision becomes historical and is treated as `Superseded by plan revision <current>`; the next `ship` run executes the updated plan into root `RESULTS.md`. The next review gets a new round against the current revision.
-
-Review-only defects do not trigger a plan update. Their correction contract remains in that round's `REVIEW.md`.
-
-## Safety and scope
-
-Specship is intentionally strict about ownership:
-
-- Repository instruction files remain authoritative.
-- `breakthrough` does not persist a planning brief until the user approves the presented direction.
-- `spec` asks only questions that can materially change the result.
-- `ship` implements the approved contract, preserves unrelated user changes, and avoids open-ended debugging or unrelated cleanup.
-- Missing material decisions return to `spec`; execution does not guess them.
-- Unresolved causal failures return through `breakthrough`, user approval, and `spec update` before execution resumes.
-- Validation starts with the smallest relevant check and broadens only when risk or repository rules justify it.
-- Full-suite runs are reserved for cross-cutting changes, explicit requirements, or meaningful regression risk.
-- Complexity findings identify correctness, maintenance, contract, integration, or scope risk—not personal style preferences.
-
-## Installation
-
-### Requirements
-
-- Git
-- Node.js 18 or newer for `npx skills`
-- A coding agent that supports the open Agent Skills format
-
-### Visual planning setup
-
-The repository-local `spec-visual` skill is included; visual rendering needs an Agent-Native Plans surface as well:
-
-- **Hosted plans:** install and authenticate the connector once for Codex with `npx -y @agent-native/core@latest skills add visual-plan --client codex`, then start a new Codex task so the `plan` tools load. If it is already registered, reconnect with `npx -y @agent-native/core@latest reconnect https://plan.agent-native.com --client codex`.
-- **Local/private plans:** use `AGENT_NATIVE_PLANS_MODE=local-files` and the Agent-Native CLI's `plan local check`, `plan local serve`, and `plan local verify` commands against `docs/plans/<plan>/visual/`. No hosted Plan authentication is required. Use a Chromium-based browser for the local bridge.
-
-The visual connector/CLI is optional for ordinary `$breakthrough`, `$spec`, and `$ship` workflows.
-
-### Optional Spec Codex setup
-
-The recommended setup is a **one-time, machine-wide setup**. Install both skills
-for Codex, then register the bundled custom agents at user scope:
-
-```bash
-npx skills add notsonata/specship --skill spec --skill spec-codex --agent codex --global --yes
-```
-
-On macOS or Linux:
-
-```bash
-python3 ~/.agents/skills/spec-codex/scripts/install_agents.py --scope user --force
-```
-
-In Windows Command Prompt:
-
-```cmd
-python3 "%USERPROFILE%\.agents\skills\spec-codex\scripts\install_agents.py" --scope user --force
-```
-
-This writes `specship-scout.toml` and `specship-validator.toml` to the personal
-Codex agent directory (`~/.codex/agents/`, or `%USERPROFILE%\.codex\agents\` on
-Windows), making them available to every local project. `--force` also refreshes
-older Specship-managed definitions during an upgrade. Fully quit and reopen Codex
-after installation, then start a new task so the custom agents load.
-
-Project scope is optional and intended only when a repository should carry its
-own agent definitions. From that repository, run:
-
-```bash
-python3 .agents/skills/spec-codex/scripts/install_agents.py --scope project --project-root .
-```
-
-The installed roles are namespaced and require the literal `$spec-codex`
-activation marker, so their presence does not activate delegated planning for
-ordinary `$spec`, `$ship`, or unrelated work. Existing different files are never
-overwritten unless the installer is run with `--force`.
-
-### Install globally
-
-```bash
-npx skills add notsonata/specship --skill breakthrough --skill spec --skill spec-visual --skill ship --global --yes
-```
-
-Use `--agent <agent-id>` to select a target explicitly. Repeat the flag to install into multiple agents. Restart an agent if the new skills do not appear immediately. A host that does not support global skill installation may be reported separately while supported hosts still install successfully.
-
-### Install in one project
-
-Run the same command from the target repository without `--global`:
-
-```bash
-npx skills add notsonata/specship --skill breakthrough --skill spec --skill spec-visual --skill ship --yes
-```
-
-### Install from a local clone
-
-```bash
-git clone https://github.com/notsonata/specship.git
-cd specship
-npx skills add . --skill breakthrough --skill spec --skill spec-visual --skill ship --global --yes
-```
-
-## Quick reference
-
-The examples use slash-command syntax. Codex users should use `$breakthrough`, `$spec`, `$spec-codex`, `$spec-visual`, and `$ship`.
-
-| Goal | Command |
-| --- | --- |
-| Investigate a difficult problem before planning | `/breakthrough <problem>` |
-| Investigate a stalled plan | `/breakthrough investigate docs/plans/<plan> <stalled problem>` |
-| Create a plan from an approved breakthrough | `/spec create a plan from docs/plans/<plan>/investigations/breakthrough-NNN.md` |
-| Plan a new request | `/spec <request>` |
-| Plan with delegated Codex evidence workers | `$spec-codex <request>` |
-| Plan with visual review | `/spec-visual <request>` |
-| Implement a plan | `/ship implement this plan: docs/plans/<plan>` |
-| Update a plan | `/spec update docs/plans/<plan> <new information>` |
-| Review an implementation | `/spec review docs/plans/<plan>` |
-| Correct reviewed work | Run `/ship` again with the same folder. |
-
-Always name the exact plan folder for recovery, implementation, update, and review. Specship never guesses the newest plan or combines multiple plan folders.
-
-## Model and agent portability
-
-The contract and evidence are plain Markdown and contain no provider-specific execution state. Investigation, planning, and execution may use different Agent Skills-compatible hosts or model providers, provided each selected agent can read and edit the repository, run the required tools, and follow project instructions. Use the strongest appropriate reasoning model available for `breakthrough`; the portable skills do not enforce a model name. Host-native invocation is the only syntax-level difference described by the core protocol. The optional `$spec-codex` companion is deliberately Codex-specific and keeps its model choice in replaceable custom-agent TOML rather than in plan artifacts.
-
-## License
-
-Licensed under the Apache License 2.0. See [LICENSE](LICENSE).
-
-## Project status
-
-Specship is an early public preview. The current focus is dogfooding the workflow across small fixes, multi-task features, difficult pre-plan discovery, stalled execution recovery, explicit contract updates, correction rounds, and passing and failing reviews. Protocol machinery is added only when repeated use demonstrates a concrete failure that simpler instructions and repository evidence cannot address.
+Native macOS process shutdown/recovery, trusted Interrupt delivery, and quiet waits in the actual Codex app/CLI still need live verification. The portability checks do not establish those host behaviors.

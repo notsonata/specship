@@ -1,0 +1,27 @@
+{
+  "name": "specship",
+  "version": "0.0.0-redesign",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "check": "npm run typecheck && npm test",
+    "pretest": "npm run build",
+    "test": "node --test test/*.test.mjs test/runtime/*.test.mjs",
+    "start": "node dist/cli.js",
+    "check:compatibility": "node scripts/check-compatibility.mjs"
+  },
+  "bin": { "specship": "dist/cli.js" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.9",
+    "typescript": "7.0.2"
+  }
+}

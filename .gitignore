@@ -1,5 +1,9 @@
-AGENTS.md
-__pycache__/
-*.py[cod]
-tests/
+*.md
+!/README.md
+!/.agents/skills/spec/SKILL.md
+!/.agents/skills/ship/SKILL.md
 docs/
+.specship/
+node_modules/
+dist/
+/skills-lock.json
