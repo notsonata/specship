@@ -4,12 +4,12 @@ import { createServer } from 'node:http';
 import { OpenCodeAdapter } from '../../dist/adapters/opencode.js';
 
 const profile={harness:'opencode',model:'openai/gpt-6-luna',options:{variant:'high'}};
-async function fakeOpenCode(t){
+async function fakeOpenCode(t,version='1.18.30'){
   const sessions=new Map(),streams=new Set();let promptRequests=0,ambiguous=false,lastPrompt;
   const server=createServer(async(req,res)=>{
     if(req.headers.authorization!==`Basic ${Buffer.from('opencode:test-password').toString('base64')}`){res.writeHead(401).end();return;}
     const url=new URL(req.url,'http://127.0.0.1');const parts=url.pathname.split('/').filter(Boolean);
-    if(url.pathname==='/global/health'){res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({version:'1.18.30'}));return;}
+    if(url.pathname==='/global/health'){res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({version}));return;}
     if(url.pathname==='/permission/p1/reply'&&req.method==='POST'){let raw='';for await(const chunk of req)raw+=chunk;assert.deepEqual(JSON.parse(raw),{reply:'once'});res.writeHead(200).end('true');return;}
     if(url.pathname===`/api/session/${[...sessions.keys()][0]}/permission/p2/reply`&&req.method==='POST'){let raw='';for await(const chunk of req)raw+=chunk;assert.deepEqual(JSON.parse(raw),{reply:'reject'});res.writeHead(204).end();return;}
     if(url.pathname==='/provider'){res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({all:[{id:'openai',models:{'gpt-6-luna':{capabilities:{input:{image:true}},variants:{high:{reasoningEffort:'high'}}}}}]}));return;}
@@ -37,6 +37,15 @@ async function fakeOpenCode(t){
   await adapter.validate(profile,['image/png']);const session=await adapter.start(process.cwd(),profile,'implement',{url:'http://127.0.0.1:1',capability:'cap'});
   return {adapter,session:session.session,sessions,streams,endpoint:{address,password:'test-password'},setAmbiguous:value=>ambiguous=value,get promptRequests(){return promptRequests;},get lastPrompt(){return lastPrompt;}};
 }
+
+test('OpenCode accepts the minimum and newer semantic versions and rejects older or invalid versions',async t=>{
+  for(const version of ['1.18.30','1.18.30+build.1','1.18.31','1.18.31-beta.1','1.19.0','1.100.0','2.0.0']){
+    await t.test(`accepts ${version}`,async t=>{const f=await fakeOpenCode(t,version);f.sessions.get(f.session).status='idle';await f.adapter.close(f.session);});
+  }
+  for(const version of ['1.18.29','1.17.100','0.99.0','1.18.30-beta.1','1.18.30-01','1.018.30','latest','1.18',null]){
+    await t.test(`rejects ${version}`,async t=>{await assert.rejects(fakeOpenCode(t,version),/requires 1\.18\.30 or newer/);});
+  }
+});
 
 test('async prompt accepts while callbacks can remain pending; SSE subscribes and filters native session shape',async t=>{
   const f=await fakeOpenCode(t);const controller=new AbortController();await f.adapter.subscribe(f.session,controller.signal);

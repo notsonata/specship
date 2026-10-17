@@ -12,6 +12,18 @@ type NativeMessage = { info: { id: string; role: string; parentID?: string; fini
 type QueuedStream = { controller: AbortController; queue: AdapterEvent[]; wake: Array<() => void>; ready: Promise<void>; setReady: () => void; failure?: Error };
 export interface OpenCodeTestEndpoint { address: string; password: string; version?: string }
 
+function supportedVersion(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const identifier = '(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)';
+  const match = new RegExp(`^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(${identifier}(?:\\.${identifier})*))?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`).exec(value);
+  if (!match) return false;
+  const actual = match.slice(1, 4).map(Number);
+  if (!actual.every(Number.isSafeInteger)) return false;
+  const minimum = [1, 18, 30];
+  for (let i = 0; i < minimum.length; i++) if (actual[i] !== minimum[i]) return actual[i]! > minimum[i]!;
+  return match[4] === undefined;
+}
+
 export class OpenCodeAdapter implements ShipAdapter {
   readonly name = 'opencode';
   private child?: ChildProcess;
@@ -131,8 +143,8 @@ export class OpenCodeAdapter implements ShipAdapter {
 
   private async validateLiveProfile(profile: Profile): Promise<void> {
     const health = await this.request('/global/health');
+    if (!supportedVersion(health?.version)) throw new Error(`Unsupported OpenCode version ${health?.version}; requires 1.18.30 or newer`);
     this.version = health.version;
-    if (this.version !== '1.18.30') throw new Error(`Unverified OpenCode version ${this.version}; expected 1.18.30`);
     const providers = await this.request('/provider');
     const [providerID, modelID] = splitModel(profile.model);
     if (!providerID || !modelID) throw new Error('Profile model must be provider/model');

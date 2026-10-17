@@ -8,7 +8,7 @@ The idea is to spend your strongest model's time on decisions that matter, while
 
 You talk to Spec in the **Codex app or Codex CLI**. Spec launches Ship through **OpenCode** automatically, so you don't have to copy plans and results between chats.
 
-> **Preview:** this version lives on the `redesign` branch. Windows has been tested. macOS setup is included, but live testing on a Mac is still pending. OpenCode **1.18.30** is currently required.
+> **Preview:** this version lives on the `redesign` branch. Windows has been tested. macOS setup is included, but live testing on a Mac is still pending. Requires OpenCode **1.18.30 or newer** and Codex **0.162.0-alpha.17.2 or newer**.
 
 ## Let your AI agent set it up
 
@@ -21,10 +21,14 @@ Use https://github.com/notsonata/specship and read its README
 in full. Use the redesign branch, not the default branch.
 
 Check my OS and installed tools, then follow the manual setup in the README.
+Use OpenCode 1.18.30 or newer and Codex 0.162.0-alpha.17.2 or newer.
 Keep the Specship checkout at a stable location outside my project. Build
 the runner, install the spec and ship skills into my project, and merge the
 generated Codex configuration and Interrupt hook without overwriting my
 existing settings or skills. Add .specship/ to my project's .gitignore.
+Keep mcp__specship in direct_only_tool_namespaces and set Codex's tool
+timeout to cover the assignment limit plus the delivery margin. Use the
+absolute executable paths and OS-specific hook generated on this machine.
 
 Ask me which available OpenCode provider/model, reasoning effort, and
 assignment time limit to use if I haven't specified them. Keep Spec as
@@ -35,7 +39,7 @@ trust to me, explain any reload needed, and don't run a paid model test
 unless I ask. Tell me what changed and how to start with $spec.
 ```
 
-The agent can do the file and configuration work. You'll still need to sign in to your model provider and approve the stop hook in Codex. There isn't a one-command installer yet; the prompt walks the agent through the setup below.
+The prompt covers all the manual setup steps below, including skills, model settings, MCP registration, timeouts, and the stop hook. The agent can do the file and configuration work. You'll still need to sign in to your model provider, approve the stop hook in Codex, and reload/restart Codex when needed. There isn't a one-command installer yet.
 
 ## Use it
 
@@ -62,12 +66,14 @@ You'll need:
 
 | Tool | Requirement |
 | --- | --- |
-| Codex | App or CLI with local skills, MCP tools, and Interrupt hooks. Tested with `0.162.0-alpha.17.2`. |
+| Codex | `0.162.0-alpha.17.2` or newer, with local skills, MCP tools, and Interrupt hooks. This is the tested Codex runtime/CLI version. |
 | Node.js and npm | Node 22 or newer; Node 24 is the tested version. |
 | Git | For cloning Specship; recommended for the project you're changing too. |
-| OpenCode | **1.18.30**, authenticated with access to your chosen Ship model. Other versions are currently rejected. |
+| OpenCode | **1.18.30 or newer**, authenticated with access to your chosen Ship model. |
 
 MCP is the connection that lets Codex call the runner. The Interrupt hook lets Codex tell the runner to stop Ship when you interrupt the chat.
+
+These are minimum versions, not exact pins. OpenCode's version is checked by the runner; the setup agent checks Codex's installed version. Required host metadata and model/API capabilities are still checked at runtime. Newer versions are allowed, but have not all been live-tested.
 
 ### 1. Download and build
 
@@ -204,7 +210,7 @@ Local storage is restricted to the current user on POSIX (`0700` directories, `0
 | Specship tools are missing | Check the generated MCP registration, absolute paths, and that `npm run build` succeeded. Reload the connection. |
 | Spec keeps checking progress | Ensure `mcp__specship` is in `direct_only_tool_namespaces` and that the tools are exposed directly. |
 | A wait times out | Check Codex's tool timeout against the assignment limit plus delivery margin. Recover the existing run rather than dispatching it again. |
-| OpenCode version or model is rejected | Use OpenCode 1.18.30 and a provider/model and variant available in your authenticated OpenCode setup. |
+| OpenCode version or model is rejected | Use OpenCode 1.18.30 or newer and a provider/model and variant available in your authenticated OpenCode setup. |
 | The stop hook doesn't run | Review/trust the current hook through `/hooks`; changed commands need review again. |
 
 ## Development
