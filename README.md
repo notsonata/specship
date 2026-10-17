@@ -17,7 +17,7 @@ Give an agent that can run terminal commands and edit local files this prompt. R
 ```text
 Install and configure Specship for my project at <absolute project path>.
 
-Use https://github.com/notsonata/specship/tree/redesign and read its README
+Use https://github.com/notsonata/specship and read its README
 in full. Use the redesign branch, not the default branch.
 
 Check my OS and installed tools, then follow the manual setup in the README.
