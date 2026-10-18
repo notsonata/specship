@@ -58,6 +58,17 @@ test('Windows ACL initialization ignores incompatible security modules inherited
   assert.ok((await lstat(join(root,'.specship','runs'))).isDirectory());
 });
 
+test('Windows storage accepts the current token default owner and normalizes it to the user', {skip:process.platform!=='win32'},async t=>{
+  const root=await fixture(t), directory=join(root,'.specship');await mkdir(directory);
+  const path=directory.replace(/'/g,"''");
+  const prefix=`$ErrorActionPreference='Stop'; Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1" -ErrorAction Stop; $identity=[System.Security.Principal.WindowsIdentity]::GetCurrent(); $item=Get-Item -LiteralPath '${path}';`;
+  const prepare=prefix+" $acl=$item.GetAccessControl(); $acl.SetOwner($identity.Owner); $item.SetAccessControl($acl); if($item.GetAccessControl().GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $identity.Owner.Value){throw 'default owner was not applied'}";
+  const run=script=>execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{stdio:'pipe',windowsHide:true});
+  run(prepare);
+  await new Store(root).initialize();
+  run(prefix+" if($item.GetAccessControl().GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $identity.User.Value){throw 'owner was not normalized to the user'}");
+});
+
 test('private storage refuses a linked root without changing its target', async t => {
   const root = await fixture(t), target = join(root, 'outside');
   await mkdir(target); await writeFile(join(target, 'sentinel'), 'keep');

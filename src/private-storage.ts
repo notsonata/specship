@@ -54,11 +54,15 @@ $ProgressPreference = 'SilentlyContinue'
 # Load this host's ACL cmdlets explicitly instead of autoloading an incompatible module.
 Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1" -ErrorAction Stop
 [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false)
-$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+$sid = $currentIdentity.User
 $paths = [Console]::In.ReadToEnd() | ConvertFrom-Json
 foreach ($path in $paths) {
   $acl = Get-Acl -LiteralPath $path
-  if ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { throw "Private storage is owned by another user: $path" }
+  $owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+  # Elevated Windows tokens can create files owned by their default owner group.
+  # Accept only this token's user/default owner, then normalize ownership to its user.
+  if ($owner -ne $sid.Value -and $owner -ne $currentIdentity.Owner.Value) { throw "Private storage is owned by another user: $path" }
 }
 foreach ($path in $paths) {
   $directory = Test-Path -LiteralPath $path -PathType Container
