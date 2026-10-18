@@ -22,17 +22,20 @@ in full. Use the redesign branch, not the default branch.
 
 Check my OS and installed tools, then follow the manual setup in the README.
 Use OpenCode 1.18.30 or newer and Codex 0.162.0-alpha.17.2 or newer.
-Keep the Specship checkout at a stable location outside my project. Build
-the runner, install the spec and ship skills into my project, and merge the
-generated Codex configuration and Interrupt hook without overwriting my
-existing settings or skills. Add .specship/ to my project's .gitignore.
-Keep mcp__specship in direct_only_tool_namespaces and set Codex's tool
-timeout to cover the assignment limit plus the delivery margin. Use the
-absolute executable paths and OS-specific hook generated on this machine.
+Clone the redesign branch into my project's .specship/runtime and build it
+there with npm ci and npm run build. If that checkout already exists,
+inspect and preserve local changes before updating it. Run setup for my
+project, install the spec and ship skills into my project's .agents/skills,
+and merge the generated Codex configuration and Interrupt hook without
+overwriting existing settings or skills. Add .specship/ to .gitignore.
+Keep existing configuration, runs, artifacts, and reconnect data in place.
+Keep mcp__specship in direct_only_tool_namespaces and use the generated
+long MCP tool timeout so Spec waits without polling. Use the absolute
+executable paths and OS-specific hook generated on this machine.
 
-Ask me which available OpenCode provider/model, reasoning effort, and
-assignment time limit to use if I haven't specified them. Keep Spec as
-the model in my Codex chat.
+Ask me which available OpenCode provider/model and reasoning effort to use
+if I haven't specified them. Leave the assignment limit disabled unless I
+explicitly request one. Keep Spec as the model in my Codex chat.
 
 Verify the build and configuration. Leave account sign-in and Codex hook
 trust to me, explain any reload needed, and don't run a paid model test
@@ -56,7 +59,7 @@ That's the entry point. You don't need to launch Ship yourself.
 3. **Build and test.** Ship implements the change and handles routine debugging. If it needs a consequential decision, it asks Spec and waits for an answer in the same Codex conversation.
 4. **Check and finish.** Spec reviews the report, inspects important changes, and independently checks acceptance. It requests a correction when there's a concrete defect and stops when the agreed work is done.
 
-While Ship works, Spec waits for a result or a decision to make. It doesn't repeatedly ask for status. The local **runner** is the small program that launches Ship, carries messages between them, and saves progress for recovery.
+While Ship works, Spec waits for a result or a decision to make. It doesn't repeatedly ask for status. **There is no assignment time limit by default:** Ship runs until it finishes, needs a decision, fails, or you stop it. The local **runner** is the small program that launches Ship, carries messages between them, and saves progress for recovery.
 
 **Spec is whichever model you're using when you invoke `$spec`.** Pick a stronger model when the planning warrants it. Ship's model and reasoning effort are configured separately.
 
@@ -75,56 +78,65 @@ MCP is the connection that lets Codex call the runner. The Interrupt hook lets C
 
 These are minimum versions, not exact pins. OpenCode's version is checked by the runner; the setup agent checks Codex's installed version. Required host metadata and model/API capabilities are still checked at runtime. Newer versions are allowed, but have not all been live-tested.
 
-### 1. Download and build
+### 1. Install inside your project
 
-Run these commands in a folder where you keep tools, outside the project you want Ship to edit:
+Open a terminal at the root of the project you want Ship to edit. These commands work in PowerShell and a macOS terminal:
 
 ```sh
-git clone --branch redesign https://github.com/notsonata/specship.git
-cd specship
+git clone --branch redesign https://github.com/notsonata/specship.git .specship/runtime
+cd .specship/runtime
 npm ci
 npm run build
 ```
 
-Keep this checkout in place: Codex will use its built runner. Specship uses OpenCode's existing provider authentication; it doesn't manage sign-in or store provider keys for you.
+The runner and dependencies live in `.specship/runtime/`. Your settings, saved runs, and artifacts stay alongside it:
+
+```text
+your-project/
+  .specship/
+    runtime/       # Specship checkout, dependencies, and built runner
+    config.json    # Ship profiles and optional limits
+    runs/          # Existing run IDs, decisions, and reconnect data
+    artifacts/     # Retained images
+  .agents/skills/  # Spec and Ship skills discovered by Codex
+  .codex/         # MCP and Interrupt hook registrations
+```
+
+If `.specship/runtime/` already contains an installation, reuse it and inspect local changes before updating; cloning will refuse to overwrite it. Keep the local checkout in place. Node and OpenCode remain separately installed tools. Specship uses OpenCode's existing provider authentication; it doesn't manage sign-in or store provider keys for you.
 
 ### 2. Configure your project
 
-Run setup from the Specship checkout. Replace the project path, OpenCode executable path, and model with your own values. Model IDs use `provider/model` format; the Luna model below is an example, not a requirement. Use a supported effort level, or omit `--variant high` to keep the model's default.
+Run setup from `.specship/runtime/`. The `--workspace ../..` argument points back to your project root. Replace the OpenCode executable path and model with your own values. Model IDs use `provider/model` format; the Luna model below is an example, not a requirement. Use a supported effort level, or omit `--variant high` to keep the model's default.
 
 **Windows (PowerShell)**
 
 ```powershell
 node dist/cli.js setup `
-  --workspace "C:\Projects\my-app" `
+  --workspace ../.. `
   --profile workhorse `
   --model openai/gpt-6-luna `
   --variant high `
   --executable "C:\path\to\opencode.exe" `
-  --shell "C:\Windows\System32\cmd.exe" `
-  --max-dispatch-seconds 240 `
-  --delivery-margin-seconds 120
+  --shell "C:\Windows\System32\cmd.exe"
 ```
 
 **macOS (live testing pending)**
 
 ```sh
 node dist/cli.js setup \
-  --workspace "/Users/you/Projects/my-app" \
+  --workspace ../.. \
   --profile workhorse \
   --model openai/gpt-6-luna \
   --variant high \
   --executable "$(command -v opencode)" \
-  --shell /bin/sh \
-  --max-dispatch-seconds 240 \
-  --delivery-margin-seconds 120
+  --shell /bin/sh
 ```
 
 The executable must be an absolute path. On macOS, if `command -v opencode` returns an alias or function, use the actual installed executable path instead. Generate setup separately on each machine so its paths and stop command match the OS.
 
-The example gives each Ship assignment **240 seconds**, plus **120 seconds** for delivering the result before Codex's tool timeout. Choose limits appropriate to your work; these are example values, not defaults or a spending cap. The assignment deadline also continues while Ship waits for a decision.
+These commands leave the assignment limit disabled. To opt into a one-hour limit, add `--max-dispatch-seconds 3600`. With a limit enabled, the delivery margin defaults to 120 seconds; change it with `--delivery-margin-seconds N`. A configured assignment deadline includes time waiting for a decision and is not a spending cap.
 
-Setup creates `<your-project>/.specship/config.json` and prints two configuration entries. It does **not** install them into Codex automatically. If configuration already exists, setup preserves it and requires matching arguments; edit the file to change your settings.
+Setup checks that the local runtime is built, creates `<your-project>/.specship/config.json`, and prints two configuration entries pointing at `.specship/runtime/dist/cli.js`. It does **not** clone the runtime or install the entries into Codex automatically. If configuration already exists, setup preserves it and requires matching arguments; edit the file to change your settings. It does not relocate or reset saved runs.
 
 ### 3. Connect Codex
 
@@ -132,8 +144,8 @@ In the project you want to work on:
 
 1. Merge the printed `codex_toml` text into `.codex/config.toml`. Decode the JSON string into normal TOML text; don't paste the surrounding JSON or literal `\n` escapes. Preserve existing tables and settings.
 2. Merge the printed `hooks_json` object into `.codex/hooks.json`, preserving other hooks.
-3. Copy Specship's `.agents/skills/spec` and `.agents/skills/ship` directories into your project's `.agents/skills/` directory. Preserve their contents, including `agents/openai.yaml`, and check for existing skills with the same names before copying. Codex discovers project skills from this location. See [Codex skill locations](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills).
-4. Add `.specship/` to your project's `.gitignore`. That folder contains local settings, saved runs, artifacts, and private connection information.
+3. Copy `spec` and `ship` from `<your-project>/.specship/runtime/.agents/skills/` into `<your-project>/.agents/skills/`. Preserve their contents, including `agents/openai.yaml`, and check for existing skills with the same names before copying. Codex discovers project skills from this location. See [Codex skill locations](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills).
+4. Add `.specship/` to your project's `.gitignore`. This excludes the local runtime checkout and dependencies as well as settings, saved runs, artifacts, and private connection information.
 5. In Codex CLI opened at your project, use `/hooks` to review and trust the generated Interrupt hook. Codex requires review of new or changed hooks. See [hook trust instructions](https://learn.chatgpt.com/docs/hooks#review-and-trust-hooks).
 6. Reload the MCP connection or restart Codex so it picks up the configuration. Confirm that `$spec` is available and the Specship tools are connected.
 
@@ -146,9 +158,17 @@ direct_only_tool_namespaces = ["mcp__specship"]
 
 If you already have that table or list, merge the entry rather than replacing it. Also keep the generated `[mcp_servers.specship]` registration, including its absolute paths and `tool_timeout_sec`.
 
-Direct tool access is what allows Spec to wait quietly. In compatibility checks, wrapping these tools in a yielding code-mode call caused extra model activity. The Codex timeout must be at least the assignment limit plus the delivery margin: **360 seconds** for the examples above.
+Direct tool access is what allows Spec to wait quietly. In compatibility checks, wrapping these tools in a yielding code-mode call caused extra model activity. The runner keeps the call pending until a meaningful event; it does not periodically return to Spec or ask it to renew a wait.
+
+Codex has a [separate per-tool transport timeout](https://learn.chatgpt.com/docs/extend/mcp). With no assignment limit, setup generates `tool_timeout_sec = 2147483` (about 24.8 days), within the timer range used by the MCP clients. This is a transport backstop, not a runner assignment deadline. It is not a guarantee of an indefinitely connected host, and that full duration has not been live-tested. If the host times out or disconnects, recover the existing run instead of starting the task again.
 
 Now open the project in Codex and try `$spec` with a small task. This will use your normal model allowance.
+
+### Moving an existing external installation
+
+Pause or stop the current run and confirm Ship is idle before changing its connection. Clone and build into `.specship/runtime/` as above, then run the local setup with your existing profile/options and limits. Merge its new MCP and hook paths, review/trust the changed hook, and reload the connection.
+
+Leave `.specship/config.json`, `runs/`, `artifacts/`, and reconnect files where they are. Run IDs and saved session information do not change. Recover an interrupted run by its exact saved identifiers. Keep the old external checkout available until its existing native OpenCode sessions have finished or been retired, since those sessions may still reference its callback bridge. Existing external registrations continue to work until you replace them.
 
 ## Change Ship's model or effort
 
@@ -171,7 +191,7 @@ Edit `.specship/config.json` in the project you're working on. For example:
     }
   },
   "limits": {
-    "max_dispatch_seconds": 240,
+    "max_dispatch_seconds": null,
     "delivery_margin_seconds": 120
   }
 }
@@ -182,7 +202,10 @@ Use your local executable paths; on macOS, the shell example is `/bin/sh`. The s
 - **`model`** selects Ship's provider and model in OpenCode.
 - **`variant`** selects `low`, `medium`, or `high` reasoning effort, when supported by that model. You can omit it to use the model's default.
 - **`profiles`** lets you save multiple choices. `default_profile` selects the usual one; you can ask Spec to use another configured profile by name.
-- **`limits`** controls assignment time and result delivery. If you change these values, update Codex's `tool_timeout_sec` to cover their sum.
+- **`limits.max_dispatch_seconds`** is optional. Omit it or set it to `null` for no assignment deadline. Set a positive number of seconds only when you want a limit. You can omit the whole `limits` object for the defaults.
+- **`limits.delivery_margin_seconds`** defaults to 120 and applies to result delivery when an assignment deadline is configured. It does not create a deadline for unlimited assignments.
+
+Existing numeric limits remain active until you remove them or set them to `null`. To switch an existing project to unlimited work, edit that field, rerun setup without `--max-dispatch-seconds` (keeping your existing profile/options), merge its new MCP timeout, and reload the connection. Active or recovered assignments retain their saved deadline or no-limit setting. For a configured cap, setup uses the cap plus delivery margin for Codex's tool timeout, up to the same transport backstop.
 
 Restart the MCP connection after changing configuration. Existing runs keep their saved profile. Specship doesn't silently upgrade the model or fall back to another one. Additional harnesses are planned; **OpenCode is the only supported Ship harness today**.
 
@@ -200,7 +223,7 @@ Only one Ship writer can work in a project at a time. Git projects get automatic
 
 Saved decisions survive callback retries: the same request gets the same answer, including verified original image files. Reusing its ID for changed input or a later assignment is rejected.
 
-Local storage is restricted to the current user on POSIX (`0700` directories, `0600` files). Windows uses ACLs allowing the current user, SYSTEM, and Administrators. Existing state is hardened on initialization; linked storage and files owned by another user are rejected. Processes running under your own account remain trusted, including your coding agents.
+Private configuration and run data are restricted to the current user on POSIX (`0700` directories, `0600` files). Windows uses ACLs allowing the current user, SYSTEM, and Administrators. Existing state is hardened on initialization; links and foreign ownership in private storage are rejected. The runtime root must be a real directory; its trusted executable contents retain dependency links and executable permissions. Processes running under your own account remain trusted, including your coding agents.
 
 ## Troubleshooting
 
@@ -208,8 +231,9 @@ Local storage is restricted to the current user on POSIX (`0700` directories, `0
 | --- | --- |
 | `$spec` is missing | Check `.agents/skills/spec/SKILL.md` in your project, then restart Codex if needed. |
 | Specship tools are missing | Check the generated MCP registration, absolute paths, and that `npm run build` succeeded. Reload the connection. |
+| Setup says the runtime is missing | Clone into `<project>/.specship/runtime`, run `npm ci` and `npm run build` there, then rerun setup for the project. Keep existing run data in place. |
 | Spec keeps checking progress | Ensure `mcp__specship` is in `direct_only_tool_namespaces` and that the tools are exposed directly. |
-| A wait times out | Check Codex's tool timeout against the assignment limit plus delivery margin. Recover the existing run rather than dispatching it again. |
+| A wait times out | Merge the current setup output's MCP timeout and reload the connection. A host timeout is separate from an assignment limit; recover the existing run rather than dispatching it again. |
 | OpenCode version or model is rejected | Use OpenCode 1.18.30 or newer and a provider/model and variant available in your authenticated OpenCode setup. |
 | The stop hook doesn't run | Review/trust the current hook through `/hooks`; changed commands need review again. |
 

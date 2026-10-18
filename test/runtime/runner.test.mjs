@@ -34,6 +34,44 @@ async function fixture(t, max=5){const root=await mkdtemp(join(tmpdir(),'specshi
 
 test('valid profile configuration parses at the ship object and unknown model options are rejected',async t=>{const f=await fixture(t);assert.equal((await readConfig(join(f.root,'config.json'))).ship.default_profile,'luna');await writeFile(join(f.root,'bad.json'),JSON.stringify({ship:{default_profile:'missing',profiles:{luna:profile}},limits:{max_dispatch_seconds:1,delivery_margin_seconds:1}}));await assert.rejects(readConfig(join(f.root,'bad.json')));});
 
+test('missing limits, an omitted assignment cap, and null all default to no assignment deadline',async t=>{
+  const f=await fixture(t);const ship={default_profile:'luna',profiles:{luna:profile}};
+  for(const limits of [undefined,{}, {max_dispatch_seconds:null}, {delivery_margin_seconds:15}]){
+    const path=join(f.root,'optional-limits.json');await writeFile(path,JSON.stringify({ship,...(limits===undefined?{}:{limits})}));const config=await readConfig(path);
+    assert.equal(config.limits.max_dispatch_seconds??null,null);assert.equal(config.limits.delivery_margin_seconds,limits?.delivery_margin_seconds??120);
+  }
+});
+
+test('an unlimited assignment stays blocked silently across elapsed time and stops on cancellation',async t=>{
+  const f=await fixture(t,null);
+  f.adapter.submit=async(session,operation)=>{f.adapter.sessions.get(session).operation=operation;return {messageId:`message-${operation}`};};
+  const abort=new AbortController();let returned=false;
+  const waiting=f.runner.dispatch({operation_id:'unlimited-wait',kind:'implement',brief},undefined,abort.signal).then(event=>{returned=true;return event;});
+  for(let count=0;count<200&&!f.adapter.sessions.size;count++)await new Promise(resolve=>setTimeout(resolve,5));
+  t.mock.timers.enable({apis:['Date'],now:Date.now()});t.mock.timers.setTime(Date.now()+7*24*60*60*1000);
+  await new Promise(resolve=>setTimeout(resolve,100));assert.equal(returned,false);
+  const [run]=await f.store.listRuns();const state=await f.store.load(run.run_id);
+  assert.equal(state.deadline,null);assert.equal(state.events.length,0);
+  abort.abort();const event=await waiting;assert.equal(event.kind,'paused');assert.equal((await f.store.load(event.run_id)).writer,false);
+});
+
+test('an unlimited decision survives recovery and a newly configured cap without gaining a deadline',async t=>{
+  const f=await fixture(t,null);const question=await f.runner.dispatch({operation_id:'unlimited-question',kind:'implement',brief});
+  const descriptor=JSON.parse(await readFile(f.store.callbackDescriptorPath(question.run_id),'utf8'));assert.equal(descriptor.deadline,null);assert.equal(descriptor.callback_timeout_ms,null);
+  await f.runner.close();
+  const next=f.track(new Runner(new Store(f.root),{ship:{default_profile:'luna',profiles:{luna:profile}},limits:{max_dispatch_seconds:1,delivery_margin_seconds:2}},new FakeAdapter()));
+  const recovered=await next.recover(question.run_id,question.supervisor_handle);assert.equal(recovered.event_id,question.event_id);
+  t.mock.timers.enable({apis:['Date'],now:Date.now()});t.mock.timers.setTime(Date.now()+7*24*60*60*1000);
+  const ready=await next.reply({run_id:question.run_id,request_id:question.payload.id,operation_id:'unlimited-answer',answer:'Ascending',expected_brief_version:question.brief_version});
+  assert.equal(ready.kind,'implementation_ready');assert.equal((await f.store.load(question.run_id)).deadline,null);
+  await next.accept(ready.run_id,ready.activity_id,ready.report_id,ready.brief_version,'Independently checked the result after recovery');
+});
+
+test('an explicitly configured assignment limit still stops and reports expiry',async t=>{
+  const f=await fixture(t,1);f.adapter.submit=async(session,operation)=>{f.adapter.sessions.get(session).operation=operation;return {messageId:`message-${operation}`};};
+  const event=await f.runner.dispatch({operation_id:'bounded-wait',kind:'implement',brief});assert.equal(event.kind,'limit_reached');assert.equal(event.payload.stop_confirmed,true);assert.equal((await f.store.load(event.run_id)).writer,false);
+});
+
 test('dispatch -> durable question -> reply -> report -> independent accept',async t=>{const f=await fixture(t,30);const event=await f.runner.dispatch({workspace:f.root,operation_id:'op-1',kind:'implement',brief});assert.equal(event.kind,'decision_required');assert.equal(event.payload.id,'q-op-1');const result=await f.runner.reply({run_id:event.run_id,request_id:'q-op-1',operation_id:'reply-1',answer:'Choose A',expected_brief_version:event.brief_version});assert.equal(result.kind,'implementation_ready',JSON.stringify({errors:f.adapter.errors,sessions:[...f.adapter.sessions.values()],reconciles:f.adapter.reconciles.slice(-2),state:await f.store.load(event.run_id)}));const state=await f.store.load(event.run_id);assert.equal(state.lifecycle,'awaiting_review');assert.equal(state.writer,false);await assert.rejects(f.runner.accept(event.run_id,event.activity_id,'stale-report',event.brief_version,'independent review evidence'),/stale/);await f.runner.accept(event.run_id,event.activity_id,result.report_id,event.brief_version,'Spec independently reviewed current source and tests');assert.equal((await f.store.load(event.run_id)).lifecycle,'completed');});
 
 test('correction reuses the same active Ship session and callback hub',async t=>{const f=await fixture(t,30);const first=await f.runner.dispatch({operation_id:'first',kind:'implement',brief});const ready=await f.runner.reply({run_id:first.run_id,request_id:'q-first',operation_id:'answer-first',answer:'A',expected_brief_version:first.brief_version});assert.equal(ready.kind,'implementation_ready');const correction=await f.runner.dispatch({run_id:first.run_id,supervisor_handle:ready.supervisor_handle,operation_id:'correction',kind:'correct',corrections:['Fix demonstrated acceptance defect'],expected_brief_version:ready.brief_version});assert.equal(correction.kind,'decision_required');assert.equal(f.adapter.sessions.size,1);assert.equal(f.adapter.next,2);});

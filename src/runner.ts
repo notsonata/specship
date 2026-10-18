@@ -8,6 +8,7 @@ import { CallbackHub } from './callbacks.js';
 import type { AdapterEvent, ShipAdapter } from './adapters/types.js';
 import type { RunnerConfig } from './contracts.js';
 import { checkpoint, changedPaths } from './workspace.js';
+import { LONG_TOOL_TIMEOUT_MS } from './timeouts.js';
 
 export class Runner {
   private active = new Map<string, { hub: CallbackHub; session: string; aborter: AbortController; eventAbort: AbortController; state: RunState; waiting: boolean; timer?: NodeJS.Timeout; stopping?: Promise<boolean> }>();
@@ -42,7 +43,7 @@ export class Runner {
        if (attached && JSON.stringify(state.profile) !== JSON.stringify({ name: selected.name, ...selected.profile })) throw new Error('A correction must keep the active run profile unchanged');
        await this.store.claimWriter(state.run_id);
        started=true;state.brief=nextBrief;if(input.kind!=='explore')state.brief_version++;
-        state.profile={name:selected.name,...selected.profile};state.activity_id=randomUUID();state.activity_kind=input.kind;state.writer=true;state.lifecycle='running';state.deadline=Date.now()+this.config.limits.max_dispatch_seconds*1000;
+        state.profile={name:selected.name,...selected.profile};state.activity_id=randomUUID();state.activity_kind=input.kind;state.writer=true;state.lifecycle='running';state.deadline=this.config.limits.max_dispatch_seconds==null?null:Date.now()+this.config.limits.max_dispatch_seconds*1000;
         state.supervisor={handle:state.supervisor?.handle??randomUUID(),thread:meta?.thread??state.supervisor?.thread,turn:meta?.turn??state.supervisor?.turn,waiting:true};
         state.report = undefined;
         state.report_id = undefined;
@@ -61,7 +62,7 @@ export class Runner {
          let sessionId = '';
           hub = new CallbackHub(this.store,state,async()=>{if(!sessionId)return false;const stopped=await this.adapter.abort(sessionId);const controller=this.active.get(state!.run_id);if(stopped&&controller?.timer){clearTimeout(controller.timer);controller.timer=undefined;}return stopped;},this.config.limits.delivery_margin_seconds*1000);
          await hub.start();
-          native = await this.adapter.start(this.store.workspace,selected.profile,input.kind,{url:hub.url,capability:hub.token,descriptorPath:this.store.callbackDescriptorPath(state.run_id),timeoutMs:Math.max(1,state.deadline!-Date.now()+this.config.limits.delivery_margin_seconds*1000)});
+          native = await this.adapter.start(this.store.workspace,selected.profile,input.kind,{url:hub.url,capability:hub.token,descriptorPath:this.store.callbackDescriptorPath(state.run_id),timeoutMs:LONG_TOOL_TIMEOUT_MS});
           session = native.session; sessionId = session;
           state.adapter={adapter:this.adapter.name,session:native.session,version:native.version,message_id:null,operation_id:input.operation_id};
          eventAbort = new AbortController();
@@ -72,6 +73,7 @@ export class Runner {
            this.scheduleDeadline(state.run_id);
          void pump;
         }
+        await this.publishDescriptor(state,hub);
         if(this.adapter.snapshot)await this.store.writePrivate(state.run_id,'adapter.json',await this.adapter.snapshot(session));
         const prompt=JSON.stringify({kind:input.kind,assignment:input.assignment,brief:state.brief,corrections:input.corrections,activity_id:state.activity_id});
         state.operation_ids[input.operation_id]={fingerprint,status:'submission_pending',activity_id:state.activity_id,session,operation_id:input.operation_id};
@@ -133,9 +135,9 @@ export class Runner {
     }
   }
   private async publishDescriptor(state:RunState,hub:CallbackHub):Promise<void>{const {thread,turn}=state.supervisor??{};if(thread&&turn)await this.store.publishInterruptDescriptor({run_id:state.run_id,session_id:thread,turn_id:turn,url:hub.url,capability:hub.token});await hub.refreshDescriptor();}
-  private scheduleDeadline(runId:string):void{const active=this.active.get(runId);if(!active||active.timer)return;const delay=Math.max(0,active.state.deadline!-Date.now());active.timer=setTimeout(()=>{active.timer=undefined;void this.expire(runId);},delay);}
+  private scheduleDeadline(runId:string):void{const active=this.active.get(runId);if(!active||active.timer||active.state.deadline==null)return;const delay=Math.max(0,Math.min(LONG_TOOL_TIMEOUT_MS,active.state.deadline-Date.now()));active.timer=setTimeout(()=>{active.timer=undefined;if(active.state.deadline!=null&&Date.now()>=active.state.deadline)void this.expire(runId);else this.scheduleDeadline(runId);},delay);}
   private async stop(active:{hub:CallbackHub;session:string;state:RunState;stopping?:Promise<boolean>}):Promise<boolean>{if(!active.stopping)active.stopping=this.adapter.abort(active.session).catch(()=>false);const confirmed=await active.stopping;if(confirmed)active.hub.detachPending();return confirmed;}
-  private async expire(runId:string):Promise<void>{const active=this.active.get(runId);if(!active)return;const state=active.state;if(state.events.some((event:any)=>event.kind==='limit_reached'&&event.activity_id===state.activity_id))return;const stopped=await this.stop(active);if(stopped){state.writer=false;state.lifecycle='paused';if(active.timer)clearTimeout(active.timer);await this.store.releaseWriter(runId);await this.store.removeInterruptDescriptor(runId);await this.store.emit(state,'limit_reached',{max_dispatch_seconds:this.config.limits.max_dispatch_seconds,stop_confirmed:true});}else{await this.store.emit(state,'limit_reached',{max_dispatch_seconds:this.config.limits.max_dispatch_seconds,stop_confirmed:false,writer_retained:true});}}
+  private async expire(runId:string):Promise<void>{const active=this.active.get(runId);if(!active||active.state.deadline==null)return;const state=active.state;if(state.events.some((event:any)=>event.kind==='limit_reached'&&event.activity_id===state.activity_id))return;const stopped=await this.stop(active);if(stopped){state.writer=false;state.lifecycle='paused';if(active.timer)clearTimeout(active.timer);await this.store.releaseWriter(runId);await this.store.removeInterruptDescriptor(runId);await this.store.emit(state,'limit_reached',{max_dispatch_seconds:this.config.limits.max_dispatch_seconds,stop_confirmed:true});}else{await this.store.emit(state,'limit_reached',{max_dispatch_seconds:this.config.limits.max_dispatch_seconds,stop_confirmed:false,writer_retained:true});}}
   private bindCaller(state:RunState,meta?:{thread?:string;turn?:string}):void{if(!meta?.thread&&!meta?.turn)return;if(meta.thread&&state.supervisor?.thread&&meta.thread!==state.supervisor.thread)throw new Error('Run belongs to a different native Codex chat');if(meta.thread)state.supervisor!.thread=meta.thread;if(meta.turn)state.supervisor!.turn=meta.turn;}
   async assertSupervisor(runId:string,handle:string|undefined,meta?:{thread?:string;turn?:string}):Promise<void>{const active=this.active.get(runId);if(!active)throw new Error('Run is not attached in this process; use specship_wait with recover=true and the saved supervisor_handle');if(!handle||handle!==active.state.supervisor?.handle)throw new Error('Exact supervisor_handle is required');this.bindCaller(active.state,meta);await this.store.save(active.state);await this.publishDescriptor(active.state,active.hub);}
   async recover(runId:string,handle:string,meta?:{thread?:string;turn?:string},signal?:AbortSignal):Promise<MaterialEvent>{
@@ -157,7 +159,7 @@ export class Runner {
       hub=new CallbackHub(this.store,state,async()=>{if(!restored)return false;return this.adapter.abort(restored.session);},this.config.limits.delivery_margin_seconds*1000);
       await hub.start();
       if(!this.adapter.restore)throw new Error('Selected adapter does not implement authenticated session restoration');
-      restored=await this.adapter.restore(snapshot,{url:hub.url,capability:hub.token,descriptorPath:this.store.callbackDescriptorPath(runId),timeoutMs:Math.max(1,state.deadline!-Date.now()+this.config.limits.delivery_margin_seconds*1000)});
+      restored=await this.adapter.restore(snapshot,{url:hub.url,capability:hub.token,descriptorPath:this.store.callbackDescriptorPath(runId),timeoutMs:LONG_TOOL_TIMEOUT_MS});
       if(this.adapter.snapshot)await this.store.writePrivate(runId,'adapter.json',await this.adapter.snapshot(restored.session));
       const eventAbort=new AbortController();await this.adapter.subscribe(restored.session,eventAbort.signal);
       const active={hub,session:restored.session,aborter:new AbortController(),eventAbort,state,waiting:false as boolean,timer:undefined as NodeJS.Timeout|undefined,stopping:undefined as Promise<boolean>|undefined};
@@ -173,7 +175,7 @@ export class Runner {
         state.pending={kind:'recovery_review',id:randomUUID(),body:{blocker:'Workspace files changed since the saved material event. Saved validation is no longer current.',evidence:drift.slice(0,100),attempts:['Compared local content hashes after reconnecting and confirming native stop'],decision:'Review the changed files and specify the authorized continuation and validation before Ship resumes.'}};
         return await this.store.emit(state,'decision_required',state.pending) as MaterialEvent;
       }
-      if(state.lifecycle!=='awaiting_review'&&Date.now()>=state.deadline!){await this.expire(runId);return state.events.at(-1) as MaterialEvent;}
+      if(state.lifecycle!=='awaiting_review'&&state.deadline!=null&&Date.now()>=state.deadline){await this.expire(runId);return state.events.at(-1) as MaterialEvent;}
       const opEntry=state.current_operation_id?[state.current_operation_id,state.operation_ids[state.current_operation_id]] as [string,any]:Object.entries(state.operation_ids).filter(([,value]:any)=>value?.activity_id===state!.activity_id).at(-1) as [string,any]|undefined;
       if(!opEntry)throw new Error('Current activity has no durable operation intent');
       const [operationKey,intent]=opEntry;const operationId=intent.operation_id??operationKey;
@@ -231,7 +233,7 @@ export class Runner {
     eventAbort: AbortController,
     skipEventId?: string,
   ): Promise<MaterialEvent> {
-    const end = state.deadline!;
+    const end = state.deadline;
     while (true) {
       if (signal?.aborted) {
         aborter.abort();
@@ -257,7 +259,7 @@ export class Runner {
         return material;
       }
 
-      if(Date.now()>=end){await this.expire(state.run_id);const limit=state.events.find((event:any)=>event.activity_id===state.activity_id&&['limit_reached','execution_failed'].includes(event.kind));if(limit)return limit as MaterialEvent;}
+      if(end!=null&&Date.now()>=end){await this.expire(state.run_id);const limit=state.events.find((event:any)=>event.activity_id===state.activity_id&&['limit_reached','execution_failed'].includes(event.kind));if(limit)return limit as MaterialEvent;}
 
       if (state.report) {
         const report = state.report as Report;
@@ -314,7 +316,7 @@ export class Runner {
     state.current_operation_id=input.operation_id;
     state.pending = { kind: 'answer', id:input.request_id, request_id: input.request_id, answer: input.answer, question };
     state.lifecycle = 'running';state.writer=true;
-    if (Date.now() >= state.deadline!) throw new Error('Activity deadline expired; Ship stop is being reconciled');
+    if (state.deadline != null && Date.now() >= state.deadline) throw new Error('Activity deadline expired; Ship stop is being reconciled');
     await this.store.save(state);
     if(active.hub.waitingForAnswer)await active.hub.release(input.answer,images);
     else{
@@ -378,7 +380,7 @@ export class Runner {
     if (input.action === 'resume') {
       if(!active)throw new Error('Explicit specship_wait recovery is required before resume');
       if(active.waiting)throw new Error('Another supervisor wait is active for this run');
-      if(Date.now()>=state.deadline!){await this.expire(input.run_id);return state.events.filter((e:any)=>e.activity_id===state.activity_id&&e.kind==='limit_reached').at(-1);}
+      if(state.deadline!=null&&Date.now()>=state.deadline){await this.expire(input.run_id);return state.events.filter((e:any)=>e.activity_id===state.activity_id&&e.kind==='limit_reached').at(-1);}
       const pending=state.pending as any;
       if(pending&&['question','permission','deferred','recovery_review'].includes(pending.kind)){
         const event=state.events.filter((e:any)=>e.activity_id===state.activity_id&&(e.kind==='decision_required'||e.kind==='user_input_required')).at(-1);

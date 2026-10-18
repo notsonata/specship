@@ -12,4 +12,4 @@ export type EventKind = 'exploration_completed'|'decision_required'|'user_input_
 export interface MaterialEvent { run_id: string; activity_id: string; event_id: string; brief_version: number; profile: string; supervisor_handle: string; report_id?: string; kind: EventKind; payload: unknown }
 export type ActivityKind = 'explore'|'implement'|'correct';
 export interface Profile { harness: 'opencode'; model: string; executable?: string; options: { variant?: string; [key: string]: unknown } }
-export interface RunnerConfig { ship: { default_profile: string; profiles: Record<string, Profile> }; limits: { max_dispatch_seconds: number; delivery_margin_seconds: number } }
+export interface RunnerConfig { ship: { default_profile: string; profiles: Record<string, Profile> }; limits: { max_dispatch_seconds?: number | null; delivery_margin_seconds: number } }

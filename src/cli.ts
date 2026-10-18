@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { resolve, isAbsolute, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { writeFile, mkdir, readFile } from 'node:fs/promises';
 import { OpenCodeAdapter } from './adapters/opencode.js';
 import { readConfig } from './config.js';
@@ -9,6 +8,8 @@ import { Runner } from './runner.js';
 import { serveSpec } from './mcp.js';
 import { interruptCommand } from './hooks.js';
 import { preparePrivateStorage } from './private-storage.js';
+import { DEFAULT_DELIVERY_MARGIN_SECONDS, toolTimeoutSeconds } from './timeouts.js';
+import { localInstallation } from './installation.js';
 
 function flags(args: string[]): Map<string, string> {
   const result = new Map<string, string>();
@@ -27,33 +28,34 @@ async function setup(args: string[]): Promise<void> {
   const profileName = options.get('profile');
   const model = options.get('model');
   const executable = options.get('executable');
-  const max = Number(options.get('max-dispatch-seconds'));
-  const margin = Number(options.get('delivery-margin-seconds'));
+  const max = options.has('max-dispatch-seconds') ? Number(options.get('max-dispatch-seconds')) : null;
+  const margin = Number(options.get('delivery-margin-seconds') ?? DEFAULT_DELIVERY_MARGIN_SECONDS);
   const variant = options.get('variant');
   const shipShell=options.get('shell');
-  if (!profileName || !model || !/^[^/]+\/.+$/.test(model) || !executable || !isAbsolute(executable) || !Number.isSafeInteger(max) || max < 1 || !Number.isSafeInteger(margin) || margin < 1 || variant && !['low','medium','high'].includes(variant)||shipShell&&!isAbsolute(shipShell)) {
-    throw new Error('setup requires --profile NAME --model provider/model --executable ABSOLUTE_PATH --max-dispatch-seconds N --delivery-margin-seconds N [--variant low|medium|high] [--shell ABSOLUTE_PATH]');
+  if (!profileName || !model || !/^[^/]+\/.+$/.test(model) || !executable || !isAbsolute(executable) || max !== null && (!Number.isSafeInteger(max) || max < 1) || !Number.isSafeInteger(margin) || margin < 1 || variant && !['low','medium','high'].includes(variant)||shipShell&&!isAbsolute(shipShell)) {
+    throw new Error('setup requires --profile NAME --model provider/model --executable ABSOLUTE_PATH [--max-dispatch-seconds N] [--delivery-margin-seconds N] [--variant low|medium|high] [--shell ABSOLUTE_PATH]');
   }
   const configPath = join(workspace, '.specship', 'config.json');
   await mkdir(workspace, { recursive: true });
   await preparePrivateStorage(workspace);
+  const installation = await localInstallation(workspace);
   let config: any;
   try {
     config = await readConfig(configPath);
     const selected = config.ship.profiles[profileName];
-    if (!selected || selected.model !== model || selected.executable !== executable || selected.options.variant !== variant || selected.options.shell!==shipShell || config.limits.max_dispatch_seconds !== max || config.limits.delivery_margin_seconds !== margin) throw new Error('Existing .specship/config.json is preserved; setup arguments must match its selected profile and limits');
+    if (!selected || selected.model !== model || selected.executable !== executable || selected.options.variant !== variant || selected.options.shell!==shipShell || (config.limits.max_dispatch_seconds ?? null) !== max || config.limits.delivery_margin_seconds !== margin) throw new Error('Existing .specship/config.json is preserved; setup arguments must match its selected profile and limits');
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     config = { ship: { default_profile: profileName, profiles: { [profileName]: { harness: 'opencode', model, executable, options: {...(variant?{variant}:{}),...(shipShell?{shell:shipShell}:{})} } } }, limits: { max_dispatch_seconds: max, delivery_margin_seconds: margin } };
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
     process.stderr.write(`Created reviewable configuration ${configPath}\n`);
   }
-  const cliPath = fileURLToPath(import.meta.url);
-  const timeout = max + margin;
+  const cliPath = installation.cli;
+  const timeout = toolTimeoutSeconds(max, margin);
   const toml = `[features.code_mode]\ndirect_only_tool_namespaces = ["mcp__specship"]\n\n[mcp_servers.specship]\ncommand = ${quote(process.execPath)}\nargs = [${quote(cliPath)}, "serve", ${quote(workspace)}]\ntool_timeout_sec = ${timeout}\n`;
   const command = interruptCommand(process.execPath, cliPath, workspace);
   const hooks = { hooks: { Interrupt: [{ hooks: [{ type: 'command', command, timeout: 3 }] }] } };
-  process.stdout.write(JSON.stringify({ configuration: configPath, codex_toml: toml, hooks_json: hooks, note: 'Review and explicitly trust the Interrupt hook in Codex; setup does not modify Codex settings.' }, null, 2) + '\n');
+  process.stdout.write(JSON.stringify({ runtime: installation.root, configuration: configPath, codex_toml: toml, hooks_json: hooks, note: 'Review and explicitly trust the Interrupt hook in Codex; setup does not modify Codex settings.' }, null, 2) + '\n');
 }
 
 async function interrupt(workspace: string): Promise<void> {

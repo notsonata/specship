@@ -66,3 +66,24 @@ test('existing nested links and hard links are rejected before private files are
   await assert.rejects(new Store(root).initialize(), /must not contain links/);
   assert.equal(await readFile(join(outside, 'file'), 'utf8'), 'keep');
 });
+
+test('runtime dependency links and executable modes are preserved while adjacent run data stays private', async t => {
+  const root=await fixture(t), directory=join(root,'.specship'), runtime=join(directory,'runtime');
+  await mkdir(join(runtime,'node_modules'),{recursive:true});await mkdir(join(runtime,'vendor'));
+  const executable=join(runtime,'vendor','tool');await writeFile(executable,'#!/bin/sh\necho fixture\n');await chmod(executable,0o755);const mode=(await lstat(executable)).mode;
+  const dependency=join(runtime,'node_modules','linked-package');await symlink(join(runtime,'vendor'),dependency,process.platform==='win32'?'junction':'dir');
+  await link(executable,join(runtime,'vendor','hardlinked-tool'));
+  const config=join(directory,'config.json');await writeFile(config,'{"existing":true}');if(process.platform!=='win32')await chmod(config,0o644);
+  const store=new Store(root);await store.initialize();const state=await store.create();await store.writePrivate(state.run_id,'adapter.json',{password:'fixture'});
+  assert.equal((await lstat(executable)).mode,mode);assert.equal(await readFile(executable,'utf8'),'#!/bin/sh\necho fixture\n');assert.equal((await lstat(dependency)).isSymbolicLink(),true);assert.equal((await lstat(executable)).nlink,2);
+  assert.equal(await readFile(config,'utf8'),'{"existing":true}');
+  if(process.platform!=='win32'){assert.equal((await lstat(config)).mode&0o777,0o600);assert.equal((await lstat(join(store.runDir(state.run_id),'adapter.json'))).mode&0o777,0o600);}
+});
+
+test('a linked runtime root and links inside private runs still fail closed', async t => {
+  const root=await fixture(t), directory=join(root,'.specship'), outside=join(root,'outside');await mkdir(directory);await mkdir(outside);
+  const runtime=join(directory,'runtime');await symlink(outside,runtime,process.platform==='win32'?'junction':'dir');
+  await assert.rejects(new Store(root).initialize(),/must not contain links/);await rm(runtime);
+  const nested=join(directory,'runs','saved','runtime');await mkdir(dirname(nested),{recursive:true});await symlink(outside,nested,process.platform==='win32'?'junction':'dir');
+  await assert.rejects(new Store(root).initialize(),/must not contain links/);
+});

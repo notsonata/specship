@@ -35,11 +35,14 @@ export async function preparePrivateStorage(workspace: string): Promise<void> {
   if (!preparation) {
     preparation = (async () => {
       const paths: string[] = [];
-      async function visit(path: string): Promise<void> {
+      async function visit(path: string, runtime = false): Promise<void> {
         const entry = await ownedEntry(path);
+        if (runtime && !entry.isDirectory()) throw new Error(`Runtime installation must be a real directory: ${path}`);
         paths.push(path);
         if (process.platform !== 'win32') await chmod(path, entry.isDirectory() ? 0o700 : 0o600);
-        if (entry.isDirectory()) for (const child of await readdir(path)) await visit(join(path, child));
+        // Runtime code is trusted executable content, not private run data. Validate
+        // its root but preserve dependency links, Git files, and executable modes.
+        if (entry.isDirectory() && !runtime) for (const child of await readdir(path)) await visit(join(path, child), path === root && child.toLowerCase() === 'runtime');
       }
       await visit(root);
       if (process.platform === 'win32') {
@@ -65,7 +68,9 @@ foreach ($path in $paths) {
     $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($principal, 'FullControl', $inherit, 'None', 'Allow')
     $acl.AddAccessRule($rule)
   }
-  Set-Acl -LiteralPath $path -AclObject $acl
+  # Persist only the owner/DACL fields we changed; the provider's Set-Acl path
+  # can request audit/security privileges when protecting existing state again.
+  (Get-Item -LiteralPath $path -Force).SetAccessControl($acl)
 }
 `;
         const command = execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, maxBuffer: 1_000_000 });

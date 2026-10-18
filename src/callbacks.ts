@@ -4,6 +4,7 @@ import type { Store, RunState } from './state.js';
 import { Report } from './contracts.js';
 import { materializeArtifacts, verifyArtifact, MAX_ARTIFACT_BYTES } from './artifacts.js';
 import { z } from 'zod';
+import { callbackTimeoutMs } from './timeouts.js';
 
 const DecisionRequest = z.object({ request_id: z.string().min(1), blocker: z.string().min(1), decision: z.string().min(1), evidence: z.array(z.string()), attempts: z.array(z.string()), image_artifact_ids: z.array(z.string()).optional() }).strict();
 type Answer = { text: string; images: Array<{ mime: string; name: string; data: Buffer }> };
@@ -104,7 +105,7 @@ export class CallbackHub {
     this.base = `http://127.0.0.1:${port}`;
     await this.refreshDescriptor();
   }
-  async refreshDescriptor():Promise<void>{await this.store.writeCallbackDescriptor(this.state.run_id,{url:this.base,capability:this.capability,deadline:this.state.deadline,delivery_margin_ms:this.deliveryMarginMs,callback_timeout_ms:Math.max(1,(this.state.deadline??Date.now())-Date.now()+this.deliveryMarginMs)});}
+  async refreshDescriptor():Promise<void>{await this.store.writeCallbackDescriptor(this.state.run_id,{url:this.base,capability:this.capability,deadline:this.state.deadline??null,delivery_margin_ms:this.deliveryMarginMs,callback_timeout_ms:callbackTimeoutMs(this.state.deadline,this.deliveryMarginMs)??null});}
   private sendAnswer(res: ServerResponse, answer: Answer): void {
     if (!res.destroyed && !res.writableEnded) res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ text: answer.text, images: answer.images.map(image => ({ mime: image.mime, name: image.name, data: image.data.toString('base64') })) }));
   }
