@@ -76,6 +76,20 @@ test('dispatch -> durable question -> reply -> report -> independent accept',asy
 
 test('correction reuses the same active Ship session and callback hub',async t=>{const f=await fixture(t,30);const first=await f.runner.dispatch({operation_id:'first',kind:'implement',brief});const ready=await f.runner.reply({run_id:first.run_id,request_id:'q-first',operation_id:'answer-first',answer:'A',expected_brief_version:first.brief_version});assert.equal(ready.kind,'implementation_ready');const correction=await f.runner.dispatch({run_id:first.run_id,supervisor_handle:ready.supervisor_handle,operation_id:'correction',kind:'correct',corrections:['Fix demonstrated acceptance defect'],expected_brief_version:ready.brief_version});assert.equal(correction.kind,'decision_required');assert.equal(f.adapter.sessions.size,1);assert.equal(f.adapter.next,2);});
 
+test('failed server cleanup blocks acceptance without losing the report or attached session',async t=>{
+  const f=await fixture(t,30);
+  const question=await f.runner.dispatch({operation_id:'cleanup',kind:'implement',brief});
+  const ready=await f.runner.reply({run_id:question.run_id,request_id:'q-cleanup',operation_id:'cleanup-answer',answer:'A',expected_brief_version:question.brief_version});
+  let closed=false;f.adapter.close=async()=>closed;
+  await assert.rejects(f.runner.accept(ready.run_id,ready.activity_id,ready.report_id,ready.brief_version,'independently checked'),/could not be closed/);
+  const saved=await f.store.load(ready.run_id);
+  assert.equal(saved.lifecycle,'awaiting_review');assert.equal(saved.report_id,ready.report_id);assert.equal(saved.accepted,undefined);
+  await assert.rejects(f.runner.dispatch({operation_id:'competing',kind:'implement',brief}),/Workspace writer is owned/);
+  closed=true;
+  await f.runner.accept(ready.run_id,ready.activity_id,ready.report_id,ready.brief_version,'independently checked');
+  assert.equal((await f.store.load(ready.run_id)).lifecycle,'completed');
+});
+
 test('duplicate operation IDs are idempotent and stale replies fail closed',async t=>{const f=await fixture(t,30);const event=await f.runner.dispatch({operation_id:'same',kind:'implement',brief});assert.equal(event.kind,'decision_required');const duplicate=await f.runner.dispatch({operation_id:'same',kind:'implement',brief});assert.equal(duplicate.event_id,event.event_id);await assert.rejects(f.runner.reply({run_id:event.run_id,request_id:'old',operation_id:'reply',answer:'no',expected_brief_version:event.brief_version}),/Stale request ID/);});
 
 test('active workspace lease rejects a concurrent independent run',async t=>{const f=await fixture(t,30);const event=await f.runner.dispatch({operation_id:'writer',kind:'implement',brief});assert.equal(event.kind,'decision_required');await assert.rejects(f.runner.dispatch({operation_id:'second',kind:'implement',brief}),/Workspace writer is owned/);assert.equal((await f.store.load(event.run_id)).writer,true);});

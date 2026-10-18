@@ -170,10 +170,7 @@ export class OpenCodeAdapter implements ShipAdapter {
     } catch (error) {
       if (!alreadyOwned) {
         const child = this.child;
-        if (child && child.exitCode === null) {
-          child.kill();
-          await new Promise<void>(resolve => child.once('exit', () => resolve()));
-        }
+        if (child && !await this.terminateChild(child)) throw new Error(`OpenCode startup failed and server termination is unconfirmed (PID ${child.pid ?? 'unknown'})`, { cause: error });
         this.child = undefined;
         this.address = '';
         this.password = '';
@@ -370,14 +367,33 @@ export class OpenCodeAdapter implements ShipAdapter {
   }
   async reconcileOperation(session:string,operationId:string):Promise<{messageId:string;status:'active'|'complete'|'unknown'}>{const user=await this.findUserMessage(session,operationId);if(!user)return {messageId:'',status:'unknown'};const status=await this.reconcile(session,user.info.id);return {messageId:user.info.id,status};}
 
+  private async terminateChild(child: ChildProcess): Promise<boolean> {
+    if (child.exitCode !== null || child.signalCode !== null) return true;
+    return new Promise<boolean>(resolve => {
+      const finish = (confirmed: boolean) => {
+        clearTimeout(timer);
+        child.removeListener('exit', onExit);
+        child.removeListener('error', onError);
+        resolve(confirmed);
+      };
+      const onExit = () => finish(true);
+      const onError = () => finish(false);
+      const timer = setTimeout(() => finish(false), Math.min(this.stopTimeoutMs, 10_000));
+      child.once('exit', onExit);
+      child.once('error', onError);
+      try { if (!child.kill()) finish(false); }
+      catch { finish(false); }
+    });
+  }
+
   async close(session: string): Promise<boolean> {
     const stopped = await this.abort(session);
     if (!stopped) return false;
     for (const [key, stream] of this.streams) { if (key === session) { stream.controller.abort(); this.streams.delete(key); } }
     const child = this.child;
-    if (child && child.exitCode === null) {
-      child.kill();
-      await new Promise<void>(resolve => child.once('exit', () => resolve()));
+    if (child) {
+      // Keep the process and endpoint available for an explicit cleanup retry.
+      if (!await this.terminateChild(child)) return false;
     } else if(this.restoredPid&&this.restoredPid!==process.pid){
       try{process.kill(this.restoredPid,'SIGTERM');}catch(error:any){if(error.code!=='ESRCH')return false;}
       const deadline=Date.now()+10_000;

@@ -38,11 +38,24 @@ test('existing private state is restricted and every new credential/state file s
       for (const path of files) assert.equal((await lstat(path)).mode & 0o777, 0o600);
     } else {
       const paths = JSON.stringify([...directories, ...files]).replace(/'/g, "''");
-      const script = `$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $allowed=@($sid,'S-1-5-18','S-1-5-32-544'); $paths=ConvertFrom-Json '${paths}'; foreach($path in $paths){ $acl=Get-Acl -LiteralPath $path; if($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid){throw 'wrong owner'}; foreach($rule in $acl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])){if($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -notin $allowed){throw "unexpected reader: $path"}} }; Write-Output 'ACL checks passed'`;
+      const script = `$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1" -ErrorAction Stop; $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $allowed=@($sid,'S-1-5-18','S-1-5-32-544'); $paths=ConvertFrom-Json '${paths}'; foreach($path in $paths){ $acl=Get-Acl -LiteralPath $path; if($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid){throw 'wrong owner'}; foreach($rule in $acl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])){if($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -notin $allowed){throw "unexpected reader: $path"}} }; Write-Output 'ACL checks passed'`;
       const result = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { encoding: 'utf8', windowsHide: true });
       assert.match(result, /ACL checks passed/);
     }
   } finally { await release(); }
+});
+
+test('Windows ACL initialization ignores incompatible security modules inherited from its parent', {skip:process.platform!=='win32'},async t=>{
+  const root=await fixture(t), modules=join(root,'modules'), security=join(modules,'Microsoft.PowerShell.Security');
+  await mkdir(security,{recursive:true});
+  await writeFile(join(security,'Microsoft.PowerShell.Security.psd1'),"@{ModuleVersion='99.0.0';RootModule='broken.psm1';FunctionsToExport=@('Get-Acl')}\n");
+  await writeFile(join(security,'broken.psm1'),"throw 'Incompatible parent security module loaded'\nfunction Get-Acl {}\n");
+  const env={...process.env,PSModulePath:modules};
+  // Establish that automatic discovery really would select the incompatible module.
+  assert.throws(()=>execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',"$ErrorActionPreference='Stop'; Get-Acl ."],{env,stdio:'pipe',windowsHide:true}));
+  const script="import { Store } from './dist/state.js'; await new Store(process.argv[1]).initialize();";
+  execFileSync(process.execPath,['--input-type=module','-e',script,root],{env,stdio:'pipe',windowsHide:true});
+  assert.ok((await lstat(join(root,'.specship','runs'))).isDirectory());
 });
 
 test('private storage refuses a linked root without changing its target', async t => {

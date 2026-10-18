@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { EventEmitter, once } from 'node:events';
+import { spawn } from 'node:child_process';
 import { OpenCodeAdapter } from '../../dist/adapters/opencode.js';
 
 const profile={harness:'opencode',model:'openai/gpt-6-luna',options:{variant:'high'}};
@@ -78,4 +80,72 @@ test('ambiguous async delivery reconciles its generated native user message with
 
 test('adapter snapshot restores the exact authenticated local session without another session or prompt',async t=>{
   const f=await fakeOpenCode(t);await f.adapter.subscribe(f.session,new AbortController().signal);const native=await f.adapter.submit(f.session,'operation with spaces','original',[ ]);const snapshot=await f.adapter.snapshot(f.session);const restored=new OpenCodeAdapter('not-spawned',150,f.endpoint);const session=await restored.restore(snapshot,{url:'http://127.0.0.1:1',capability:'new',descriptorPath:'private'});assert.equal(session.session,f.session);assert.equal(await restored.reconcile(session.session,native.messageId),'active');assert.equal(f.promptRequests,1);
+});
+
+test('closing an owned server confirms real process exit, including signal termination',async t=>{
+  const f=await fakeOpenCode(t);f.sessions.get(f.session).status='idle';
+  const child=spawn(process.execPath,['-e',"process.send('ready');setInterval(()=>{},1000)"],{stdio:['ignore','ignore','ignore','ipc'],windowsHide:true});
+  t.after(()=>{if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');});
+  await once(child,'message');f.adapter.child=child;
+  assert.equal(await f.adapter.close(f.session),true);
+  assert.ok(child.exitCode!==null||child.signalCode!==null);
+  assert.equal(f.adapter.child,undefined);
+});
+
+test('unconfirmed owned-server termination is bounded, preserves recovery data, and can be retried',async t=>{
+  const f=await fakeOpenCode(t);f.sessions.get(f.session).status='idle';
+  const child=Object.assign(new EventEmitter(),{exitCode:null,signalCode:null,kill:()=>true});
+  f.adapter.child=child;const address=f.adapter.address,password=f.adapter.password;
+  const started=Date.now();
+  assert.equal(await f.adapter.close(f.session),false);
+  assert.ok(Date.now()-started<2000,'close must return when the child never emits exit');
+  assert.equal(f.adapter.child,child);assert.equal(f.adapter.address,address);assert.equal(f.adapter.password,password);
+  assert.equal(child.listenerCount('exit'),0);assert.equal(child.listenerCount('error'),0);
+  // Emit synchronously to ensure listeners are registered before kill is requested.
+  child.kill=()=>{child.signalCode='SIGTERM';child.emit('exit',null,'SIGTERM');return true;};
+  assert.equal(await f.adapter.close(f.session),true);
+  assert.equal(f.adapter.child,undefined);
+});
+
+test('owned-server kill refusal, exception, and error never claim successful cleanup',async t=>{
+  for(const mode of ['refused','throws','error'])await t.test(mode,async t=>{
+    const f=await fakeOpenCode(t);f.sessions.get(f.session).status='idle';
+    const child=Object.assign(new EventEmitter(),{exitCode:null,signalCode:null,kill:()=>{
+      if(mode==='throws')throw Error('kill failed');
+      if(mode==='error')child.emit('error',Error('kill failed'));
+      return mode!=='refused';
+    }});
+    f.adapter.child=child;
+    assert.equal(await f.adapter.close(f.session),false);
+    assert.equal(f.adapter.child,child);
+    assert.equal(child.listenerCount('exit'),0);assert.equal(child.listenerCount('error'),0);
+  });
+});
+
+test('an already signal-terminated owned child does not wait for a second exit event',async t=>{
+  const f=await fakeOpenCode(t);f.sessions.get(f.session).status='idle';
+  f.adapter.child={exitCode:null,signalCode:'SIGTERM',kill:()=>{throw Error('already exited');}};
+  assert.equal(await f.adapter.close(f.session),true);
+});
+
+test('failed-startup cleanup is bounded and retains an unconfirmed server identity',async()=>{
+  const adapter=new OpenCodeAdapter('not-spawned',150);
+  const child=Object.assign(new EventEmitter(),{pid:1234,exitCode:null,signalCode:null,kill:()=>true});
+  adapter.startServer=async()=>{adapter.child=child;adapter.address='http://127.0.0.1:1';};
+  const failure=Error('profile validation failed');adapter.validateLiveProfile=async()=>{throw failure;};
+  const started=Date.now();
+  await assert.rejects(adapter.start(process.cwd(),profile,'implement',{url:'http://127.0.0.1:1',capability:'cap'}),error=>{
+    assert.match(error.message,/termination is unconfirmed \(PID 1234\)/);assert.equal(error.cause,failure);return true;
+  });
+  assert.ok(Date.now()-started<2000);assert.equal(adapter.child,child);assert.equal(adapter.address,'http://127.0.0.1:1');
+  assert.equal(child.listenerCount('exit'),0);assert.equal(child.listenerCount('error'),0);
+});
+
+test('failed-startup cleanup preserves the original error after confirmed termination',async()=>{
+  const adapter=new OpenCodeAdapter('not-spawned',150);
+  const child=Object.assign(new EventEmitter(),{exitCode:null,signalCode:null,kill:()=>{child.signalCode='SIGTERM';child.emit('exit',null,'SIGTERM');return true;}});
+  adapter.startServer=async()=>{adapter.child=child;adapter.address='http://127.0.0.1:1';};
+  const failure=Error('profile validation failed');adapter.validateLiveProfile=async()=>{throw failure;};
+  await assert.rejects(adapter.start(process.cwd(),profile,'implement',{url:'http://127.0.0.1:1',capability:'cap'}),error=>error===failure);
+  assert.equal(adapter.child,undefined);assert.equal(adapter.address,'');
 });

@@ -50,6 +50,9 @@ export async function preparePrivateStorage(workspace: string): Promise<void> {
         const script = `
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+# A PowerShell 7 parent can pass its module path to Windows PowerShell 5.1.
+# Load this host's ACL cmdlets explicitly instead of autoloading an incompatible module.
+Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1" -ErrorAction Stop
 [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false)
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
 $paths = [Console]::In.ReadToEnd() | ConvertFrom-Json
