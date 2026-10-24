@@ -9,11 +9,14 @@ import type { AdapterEvent, ShipAdapter } from './adapters/types.js';
 import type { RunnerConfig } from './contracts.js';
 import { checkpoint, changedPaths } from './workspace.js';
 import { LONG_TOOL_TIMEOUT_MS } from './timeouts.js';
+import { isTerminal, setPhase, transition } from './policy.js';
+import { SpecshipError } from './errors.js';
 
 type ActiveExecution = { hub: CallbackHub; session: string; aborter: AbortController; eventAbort: AbortController; state: RunState; waiting: boolean; timer?: NodeJS.Timeout; stopping?: Promise<boolean>; pump?: Promise<void>; closing?: boolean; disposed?: boolean };
 
 export class Runner {
   private active = new Map<string, ActiveExecution>();
+  private expiring = new Map<string, Promise<void>>();
   constructor(private store: Store, private config: RunnerConfig, private adapter: ShipAdapter) {}
   profiles(){return this.config.ship;}
   private async media(workspace: string, refs: unknown[] = []) {
@@ -35,8 +38,8 @@ export class Runner {
        if(!input.run_id&&this.active.size)throw new Error('Workspace writer is owned by an attached Ship context; accept or cancel it before starting another run');
        const attached = input.run_id ? this.active.get(input.run_id) : undefined;
         state = attached?.state ?? (input.run_id ? await this.store.load(input.run_id) : await this.store.create());
-       if(input.kind==='correct'&&!input.run_id)throw new Error('A correction requires the exact existing run_id');
-       if(['completed','cancelled','failed'].includes(state.lifecycle))throw new Error(`Run is terminal (${state.lifecycle}); dispatch a new run instead`);
+       if(input.kind==='correct'&&!input.run_id)throw new SpecshipError('INVALID_TRANSITION','A correction requires the exact existing run_id');
+       if(isTerminal(state.phase ?? 'failed'))throw new SpecshipError('TERMINAL_RUN',`Run is terminal (${state.phase ?? state.lifecycle}); dispatch a new run instead`);
        if(attached){if(input.supervisor_handle!==state.supervisor?.handle)throw new Error('Exact supervisor_handle is required');this.bindCaller(state,meta);}
        if(state.operation_ids[input.operation_id]){const recorded=state.operation_ids[input.operation_id] as any;if(recorded.fingerprint&&recorded.fingerprint!==fingerprint)throw new Error('Operation ID was reused with different dispatch input');const event=recorded.result??recorded;if(event.event_id)return event as MaterialEvent;throw new Error('Operation was already prepared/submitted; reconcile its exact saved adapter message instead of replaying');}
       if(state.writer)throw new Error('A Ship writer is already active');if(input.expected_brief_version!==undefined&&input.expected_brief_version!==state.brief_version)throw new Error('Stale brief version');
@@ -48,7 +51,7 @@ export class Runner {
        if (attached && JSON.stringify(state.profile) !== JSON.stringify({ name: selected.name, ...selected.profile })) throw new Error('A correction must keep the active run profile unchanged');
        await this.store.claimWriter(state.run_id);
        started=true;state.brief=nextBrief;if(input.kind!=='explore')state.brief_version++;
-        state.profile={name:selected.name,...selected.profile};state.activity_id=randomUUID();state.activity_kind=input.kind;state.writer=true;state.lifecycle='running';state.deadline=this.config.limits.max_dispatch_seconds==null?null:Date.now()+this.config.limits.max_dispatch_seconds*1000;
+        state.profile={name:selected.name,...selected.profile};state.activity_id=randomUUID();state.activity_kind=input.kind;state.writer=true;transition(state,'dispatch');state.deadline=this.config.limits.max_dispatch_seconds==null?null:Date.now()+this.config.limits.max_dispatch_seconds*1000;
         state.supervisor={handle:state.supervisor?.handle??randomUUID(),thread:meta?.thread??state.supervisor?.thread,turn:meta?.turn??state.supervisor?.turn,waiting:true};
         state.report = undefined;
         state.report_id = undefined;
@@ -120,12 +123,12 @@ export class Runner {
           const stopped = await this.stop(active);
           if (stopped) {
             state.writer = false;
-            state.lifecycle = 'paused';
+            setPhase(state, 'paused');
             await this.store.releaseWriter(state.run_id).catch(() => {});
             await this.store.emit(state, 'paused', { reason: 'runner error; adapter stop confirmed' }).catch(() => {});
             if (!await this.disposeActive(state.run_id, true)) state.cleanup_pending = true;
           } else state.cleanup_pending = true;
-        } else {state.lifecycle='failed';state.writer=false;await this.store.releaseWriter(state.run_id).catch(()=>{});}
+        } else {setPhase(state,'failed');state.writer=false;await this.store.releaseWriter(state.run_id).catch(()=>{});}
         await this.store.save(state).catch(() => {});
       }
       throw error;
@@ -163,6 +166,20 @@ export class Runner {
     if(!this.active.has(state.run_id))return;
     if(!await this.disposeActive(state.run_id,true)){state.cleanup_pending=true;await this.store.save(state).catch(()=>{});}
   }
+  private wakeCell(runId:string):{promise:Promise<void>;dispose:() => void}{
+    let resolve!:() => void;const promise=new Promise<void>(done=>{resolve=done;});const dispose=this.store.onChange(runId,()=>resolve());
+    return {promise,dispose};
+  }
+  private waitForWake(cell:{promise:Promise<void>},deadline:number|null|undefined,signal?:AbortSignal):Promise<void>{
+    return new Promise<void>(resolve=>{
+      let settled=false;let timer:NodeJS.Timeout|undefined;
+      const finish=()=>{if(settled)return;settled=true;if(timer)clearTimeout(timer);signal?.removeEventListener('abort',finish);resolve();};
+      if(signal?.aborted){finish();return;}
+      signal?.addEventListener('abort',finish,{once:true});
+      if(deadline!=null){const delay=Math.max(0,Math.min(LONG_TOOL_TIMEOUT_MS,deadline-Date.now()));timer=setTimeout(finish,delay);}
+      cell.promise.then(finish);
+    });
+  }
   private async consume(session:string,signal:AbortSignal,_hub:CallbackHub,state:RunState,active?:ActiveExecution):Promise<void>{
     try{
       for await(const e of this.adapter.events(session,signal)){
@@ -171,6 +188,7 @@ export class Runner {
           if(!id||(state.pending as any)?.id===id)continue;
           state.pending={kind:'permission',id,body:data};await this.store.emit(state,'user_input_required',data);
         }
+        if(e.type==='idle')this.store.notify(state.run_id);
         if(e.type==='error'){
           const expectedAbort=(e.data as any)?.error?.name==='MessageAbortedError'&&((state.stop_request as any)?.status==='requested'||active?.stopping);
           if(!expectedAbort)await this.store.emit(state,'execution_failed',e.data);
@@ -183,7 +201,20 @@ export class Runner {
   private async publishDescriptor(state:RunState,hub:CallbackHub):Promise<void>{const {thread,turn}=state.supervisor??{};if(thread&&turn)await this.store.publishInterruptDescriptor({run_id:state.run_id,session_id:thread,turn_id:turn,url:hub.url,capability:hub.token});await hub.refreshDescriptor();}
   private scheduleDeadline(runId:string):void{const active=this.active.get(runId);if(!active||active.timer||active.state.deadline==null)return;const delay=Math.max(0,Math.min(LONG_TOOL_TIMEOUT_MS,active.state.deadline-Date.now()));active.timer=setTimeout(()=>{active.timer=undefined;if(active.state.deadline!=null&&Date.now()>=active.state.deadline)void this.expire(runId);else this.scheduleDeadline(runId);},delay);}
   private async stop(active:ActiveExecution):Promise<boolean>{if(!active.stopping)active.stopping=this.adapter.abort(active.session).catch(()=>false);const confirmed=await active.stopping;if(confirmed)active.hub.detachPending();return confirmed;}
-  private async expire(runId:string):Promise<void>{const active=this.active.get(runId);if(!active||active.state.deadline==null)return;const state=active.state;if(state.events.some((event:any)=>event.kind==='limit_reached'&&event.activity_id===state.activity_id))return;const stopped=await this.stop(active);if(stopped){state.writer=false;state.lifecycle='paused';if(active.timer)clearTimeout(active.timer);await this.store.releaseWriter(runId);await this.store.removeInterruptDescriptor(runId);await this.store.emit(state,'limit_reached',{max_dispatch_seconds:this.config.limits.max_dispatch_seconds,stop_confirmed:true});}else{await this.store.emit(state,'limit_reached',{max_dispatch_seconds:this.config.limits.max_dispatch_seconds,stop_confirmed:false,writer_retained:true});}}
+  private async expire(runId:string):Promise<void>{
+    const existing=this.expiring.get(runId);
+    if(existing)return await existing;
+    const task=this.expireNow(runId);
+    this.expiring.set(runId,task);
+    try{await task;}finally{if(this.expiring.get(runId)===task)this.expiring.delete(runId);}
+  }
+  private async expireNow(runId:string):Promise<void>{
+    const active=this.active.get(runId);if(!active||active.state.deadline==null)return;
+    const state=active.state;if(state.events.some((event:any)=>event.kind==='limit_reached'&&event.activity_id===state.activity_id))return;
+    const stopped=await this.stop(active);
+    if(stopped){state.writer=false;setPhase(state,'limit_reached');if(active.timer)clearTimeout(active.timer);await this.store.releaseWriter(runId);await this.store.removeInterruptDescriptor(runId);await this.store.emit(state,'limit_reached',{max_dispatch_seconds:this.config.limits.max_dispatch_seconds,stop_confirmed:true});}
+    else{await this.store.emit(state,'limit_reached',{max_dispatch_seconds:this.config.limits.max_dispatch_seconds,stop_confirmed:false,writer_retained:true});}
+  }
   private bindCaller(state:RunState,meta?:{thread?:string;turn?:string}):void{if(!meta?.thread&&!meta?.turn)return;if(meta.thread&&state.supervisor?.thread&&meta.thread!==state.supervisor.thread)throw new Error('Run belongs to a different native Codex chat');if(meta.thread)state.supervisor!.thread=meta.thread;if(meta.turn)state.supervisor!.turn=meta.turn;}
   async assertSupervisor(runId:string,handle:string|undefined,meta?:{thread?:string;turn?:string}):Promise<void>{const active=this.active.get(runId);if(!active)throw new Error('Run is not attached in this process; use specship_wait with recover=true and the saved supervisor_handle');if(!handle||handle!==active.state.supervisor?.handle)throw new Error('Exact supervisor_handle is required');this.bindCaller(active.state,meta);await this.store.save(active.state);await this.publishDescriptor(active.state,active.hub);}
   async recover(runId:string,handle:string,meta?:{thread?:string;turn?:string},signal?:AbortSignal):Promise<MaterialEvent>{
@@ -217,7 +248,7 @@ export class Runner {
       const drift=state.workspace_checkpoint&&currentCheckpoint?changedPaths(state.workspace_checkpoint,currentCheckpoint):[];
       if(drift.length){
         if(!await this.stop(active)){await this.store.emit(state,'execution_failed',{reason:'Workspace changed and stop is unconfirmed; writer retained'});return state.events.at(-1) as MaterialEvent;}
-        state.report=undefined;state.report_id=undefined;state.lifecycle='awaiting_spec';state.writer=false;
+        state.report=undefined;state.report_id=undefined;setPhase(state,'awaiting_decision');state.writer=false;
         state.pending={kind:'recovery_review',id:randomUUID(),body:{blocker:'Workspace files changed since the saved material event. Saved validation is no longer current.',evidence:drift.slice(0,100),attempts:['Compared local content hashes after reconnecting and confirming native stop'],decision:'Review the changed files and specify the authorized continuation and validation before Ship resumes.'}};
         return await this.store.emit(state,'decision_required',state.pending) as MaterialEvent;
       }
@@ -231,7 +262,7 @@ export class Runner {
         const matched=await this.adapter.reconcileOperation(restored.session,operationId);
         if(matched.status==='unknown'){
           const stopped=await this.stop(active);
-          if(stopped){state.writer=false;state.lifecycle='paused';await this.store.releaseWriter(runId);await this.store.emit(state,'execution_failed',{reason:'submission outcome is ambiguous; confirmed stopped; do not retry original prompt'});}
+          if(stopped){state.writer=false;setPhase(state,'paused');await this.store.releaseWriter(runId);await this.store.emit(state,'execution_failed',{reason:'submission outcome is ambiguous; confirmed stopped; do not retry original prompt'});}
           else await this.store.emit(state,'execution_failed',{reason:'submission outcome is ambiguous and stop is unconfirmed; writer retained'});
           return state.events.at(-1) as MaterialEvent;
         }
@@ -241,7 +272,7 @@ export class Runner {
         const stopped=await this.stop(active);
         if(!stopped){await this.store.emit(state,'execution_failed',{reason:'recovery could not confirm quiescence of the old callback turn; writer retained'});return state.events.at(-1) as MaterialEvent;}
         const isDecision=['question','recovery_review'].includes((state.pending as any).kind);
-        state.lifecycle=isDecision?'awaiting_spec':'awaiting_user';state.writer=false;state.supervisor!.waiting=false;await this.store.save(state);
+        setPhase(state,isDecision?'awaiting_decision':'awaiting_user');state.writer=false;state.supervisor!.waiting=false;await this.store.save(state);
         const event=state.events.filter((item:any)=>item.activity_id===state!.activity_id&&(isDecision?item.kind==='decision_required':item.kind==='user_input_required')).at(-1) as MaterialEvent|undefined;
         if(event){state.handled_event_ids=[...new Set([...(state.handled_event_ids??[]),...state.events.filter((item:any)=>item.activity_id===state!.activity_id&&item.event_id!==event.event_id).map((item:any)=>item.event_id)])];await this.store.save(state);return event;}
       }
@@ -258,7 +289,7 @@ export class Runner {
         if(native==='unknown'||(native==='complete'&&!state.report)){
           const reason=native==='unknown'?'native execution could not be reconciled after restart; the prompt outcome is ambiguous and was not replayed':'native activity completed without a validated report';
           const stopped=await this.stop(active);
-          if(stopped){state.writer=false;state.lifecycle='paused';await this.store.releaseWriter(runId);await this.store.removeInterruptDescriptor(runId);await this.store.emit(state,'execution_failed',{reason,stop_confirmed:true});}
+          if(stopped){state.writer=false;setPhase(state,'paused');await this.store.releaseWriter(runId);await this.store.removeInterruptDescriptor(runId);await this.store.emit(state,'execution_failed',{reason,stop_confirmed:true});}
           else await this.store.emit(state,'execution_failed',{reason:`${reason}; stop unconfirmed`,stop_confirmed:false});
           return state.events.at(-1) as MaterialEvent;
         }
@@ -271,7 +302,7 @@ export class Runner {
           return await this.blockUntilEvent(state,signal,active.aborter,hub,restored.session,eventAbort);
         }
       }
-      state.lifecycle='running';state.writer=true;state.supervisor!.waiting=true;active.stopping=undefined;await this.store.save(state);
+      setPhase(state,'running');state.writer=true;state.supervisor!.waiting=true;active.stopping=undefined;await this.store.save(state);
       this.scheduleDeadline(runId);
       return await this.blockUntilEvent(state,signal,active.aborter,hub,restored.session,eventAbort);
     }catch(error){
@@ -291,12 +322,14 @@ export class Runner {
   ): Promise<MaterialEvent> {
     const end = state.deadline;
     while (true) {
+      const cell=this.wakeCell(state.run_id);
+      try {
       if (signal?.aborted) {
         aborter.abort();
         const stopped = await this.stop(this.active.get(state.run_id)!);
         if (!stopped) throw new Error('Stop could not be verified; writer remains unsafe');
         state.writer = false;
-        state.lifecycle = 'paused';
+        setPhase(state, 'paused');
         await this.store.releaseWriter(state.run_id);
         await this.store.removeInterruptDescriptor(state.run_id);
         const paused = await this.store.emit(state, 'paused', { reason: 'supervisor cancellation' }) as MaterialEvent;
@@ -311,7 +344,7 @@ export class Runner {
         (event.kind === 'decision_required' && ['question','recovery_review'].includes(unresolved?.kind??'') && event.payload?.id === unresolved?.id)),
       ) as MaterialEvent | undefined;
       if (material) {
-        if(material.kind==='decision_required')state.lifecycle='awaiting_spec';else if(material.kind==='user_input_required')state.lifecycle='awaiting_user';
+        if(material.kind==='decision_required')setPhase(state,'awaiting_decision');else if(material.kind==='user_input_required')setPhase(state,'awaiting_user');
         await this.store.save(state);
         if(material.kind==='paused'||material.kind==='limit_reached')await this.disposeAfterTerminalEvent(state);
         return material;
@@ -334,20 +367,21 @@ export class Runner {
               await this.store.emit(state, 'execution_failed', { reason: 'Workspace changed after the implementation report and Ship stop is unconfirmed', evidence: drift.slice(0, 100) });
               return state.events.at(-1) as MaterialEvent;
             }
-            state.lifecycle = 'awaiting_spec';
+            setPhase(state, 'awaiting_decision');
             state.pending = { kind: 'recovery_review', id: randomUUID(), body: { blocker: 'Workspace files changed after the implementation report; the saved validation is no longer current.', evidence: drift.slice(0, 100), attempts: ['Compared the report checkpoint with the current workspace'], decision: 'Review the changed files and specify the authorized continuation and validation.' } };
             await this.store.releaseWriter(state.run_id);
             return await this.store.emit(state, 'decision_required', { report, ...(state.pending as any) }) as MaterialEvent;
           }
           const isExploration = state.activity_kind === 'explore';
           const status = 'status' in report ? report.status : undefined;
-          state.lifecycle = !isExploration && status === 'ready_for_review' ? 'awaiting_review' : !isExploration&&status==='needs_decision'?'awaiting_spec':'idle';
+          setPhase(state, !isExploration && status === 'ready_for_review' ? 'awaiting_review' : !isExploration&&status==='needs_decision'?'awaiting_decision':'idle');
           if (state.lifecycle !== 'awaiting_review') await this.store.releaseWriter(state.run_id);
           const kind = isExploration ? 'exploration_completed' : status === 'ready_for_review' ? 'implementation_ready' : status === 'needs_decision' ? 'decision_required' : 'execution_failed';
           return await this.store.emit(state, kind, { report,...(status==='needs_decision'?{request_id:state.report_id}:{}) }) as MaterialEvent;
         }
       }
-      await new Promise(resolve => setTimeout(resolve, 40));
+      await this.waitForWake(cell,end,signal);
+      } finally { cell.dispose(); }
     }
   }
   async reply(input: { run_id: string; request_id: string; operation_id: string; answer: string; expected_brief_version: number; brief?: unknown; defer_to_user?: boolean }, meta?:{thread?:string;turn?:string}, signal?:AbortSignal): Promise<MaterialEvent> {
@@ -371,12 +405,12 @@ export class Runner {
     }
     if(question.kind==='recovery_review'){state.report=undefined;state.report_id=undefined;state.report_checkpoint=undefined;}
     if(active.waiting)throw new Error('Another supervisor wait is active for this run');
-    if(input.defer_to_user){state.pending={...question,kind:permission?'permission':'deferred'};state.lifecycle='awaiting_user';state.supervisor!.waiting=false;const event=await this.store.emit(state,'user_input_required',{request_id:input.request_id,...(permission?{id:input.request_id}:{}),reason:'decision deferred to user'} ) as MaterialEvent;state.operation_ids[input.operation_id]={fingerprint,result:event};await this.store.save(state);return event;}
+    if(input.defer_to_user){state.pending={...question,kind:permission?'permission':'deferred'};setPhase(state,'awaiting_user');state.supervisor!.waiting=false;const event=await this.store.emit(state,'user_input_required',{request_id:input.request_id,...(permission?{id:input.request_id}:{}),reason:'decision deferred to user'} ) as MaterialEvent;state.operation_ids[input.operation_id]={fingerprint,result:event};await this.store.save(state);return event;}
     if (input.brief) { const parsed=Brief.parse(input.brief);state.brief={...parsed,artifacts:await materializeArtifacts(this.store.workspace,parsed.artifacts??[])};state.brief_version++; }
     if(!state.writer)await this.store.claimWriter(state.run_id);
     if(permission){
       state.handled_event_ids=[...new Set([...(state.handled_event_ids??[]),...state.events.filter((event:any)=>event.activity_id===state.activity_id).map((event:any)=>event.event_id)])];
-      state.operation_ids[input.operation_id]={fingerprint,answer:input.answer};state.pending={...question,kind:'permission_answer',answer:input.answer};state.lifecycle='running';await this.store.save(state);
+      state.operation_ids[input.operation_id]={fingerprint,answer:input.answer};state.pending={...question,kind:'permission_answer',answer:input.answer};transition(state,'reply');await this.store.save(state);
        await this.adapter.resolvePermission?.(active.session,question.id,'reject');
     } else {
     const requested = new Set<string>(question.body?.image_artifact_ids ?? []);
@@ -388,7 +422,7 @@ export class Runner {
     state.operation_ids[input.operation_id] = { fingerprint, activity_id:state.activity_id, operation_id:input.operation_id, status:'answer_durable', answer: input.answer };
     state.current_operation_id=input.operation_id;
     state.pending = { kind: 'answer', id:input.request_id, request_id: input.request_id, answer: input.answer, question };
-    state.lifecycle = 'running';state.writer=true;
+    transition(state,'reply');state.writer=true;
     if (state.deadline != null && Date.now() >= state.deadline) throw new Error('Activity deadline expired; Ship stop is being reconciled');
     await this.store.save(state);
     if(active.hub.waitingForAnswer)await active.hub.release(input.answer,images);
@@ -440,7 +474,7 @@ export class Runner {
       if(stopped===false)throw new Error('OpenCode server could not be closed after confirmed idle');
       active.eventAbort.abort();await active.hub.close();this.active.delete(runId);
     }
-    state.lifecycle='completed';state.accepted={evidence,at:new Date().toISOString()};
+    transition(state,'accept');state.accepted={evidence,at:new Date().toISOString()};
     await this.store.save(state);await this.store.releaseWriter(runId);await this.store.removeInterruptDescriptor(runId);
   }
   async control(input: { run_id: string; operation_id: string; action: 'pause' | 'resume' | 'cancel'; reason: string; supervisor_handle?: string },meta?:{thread?:string;turn?:string},signal?:AbortSignal): Promise<unknown> {
@@ -466,7 +500,7 @@ export class Runner {
       const reconciled=await this.adapter.reconcile(active.session,messageId);
       if(reconciled==='unknown')throw new Error('Paused OpenCode session identity cannot be reconciled');
       await this.store.claimWriter(state.run_id);
-      state.writer=true;state.lifecycle='running';state.report=undefined;state.report_id=undefined;
+      state.writer=true;transition(state,'resume');state.report=undefined;state.report_id=undefined;
       state.handled_event_ids=[...new Set([...(state.handled_event_ids??[]),...state.events.map((event:any)=>event.event_id)])];active.stopping=undefined;
       const continuationId=`resume-${input.operation_id}`;
       const prompt=JSON.stringify({kind:'continue',instruction:'Continue the already-authorized activity from current repository and native session state. Do not replay completed work or restart the original prompt. Follow the current brief and report through report_result.',brief:state.brief,activity_id:state.activity_id});
@@ -487,7 +521,7 @@ export class Runner {
     const confirmed = await active.hub.stop(input.reason);
     if (!confirmed) throw new Error('Stop request recorded but execution quiescence is unconfirmed');
     state.writer = false;
-    state.lifecycle = input.action === 'cancel' ? 'cancelled' : 'paused';
+    transition(state,input.action === 'cancel' ? 'cancel' : 'pause');
     const event = await this.store.emit(state, input.action === 'cancel' ? 'cancelled' : 'paused', { reason: input.reason });
     state.operation_ids[input.operation_id] = {fingerprint,result:event};
     await this.store.save(state);
@@ -504,7 +538,7 @@ export class Runner {
       const stopped = await this.disposeActive(runId, true);
       if (stopped && state.lifecycle !== 'awaiting_review' && state.lifecycle !== 'completed') {
         state.writer = false;
-        state.lifecycle = 'paused';
+        setPhase(state, 'paused');
         await this.store.releaseWriter(state.run_id);
         await this.store.emit(state, 'paused', { reason: 'runner closed; Ship stop confirmed' });
         await this.store.removeInterruptDescriptor(state.run_id);

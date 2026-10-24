@@ -4,6 +4,7 @@ import type { Store, RunState } from './state.js';
 import { Report } from './contracts.js';
 import { materializeArtifacts, verifyArtifact, MAX_ARTIFACT_BYTES } from './artifacts.js';
 import { checkpoint } from './workspace.js';
+import { setPhase } from './policy.js';
 import { z } from 'zod';
 import { callbackTimeoutMs } from './timeouts.js';
 
@@ -76,6 +77,7 @@ export class CallbackHub {
           this.state.report_checkpoint = await checkpoint(this.store.workspace);
           this.state.pending = { kind: 'report', id: this.state.report_id };
           await this.store.save(this.state);
+          this.store.notify(this.state.run_id);
           if (!res.destroyed) res.writeHead(200).end('{}');
         } else if (req.url === '/interrupt') {
           const native = this.state.supervisor;
@@ -87,7 +89,7 @@ export class CallbackHub {
           void (async () => {
             const confirmed = await this.stop('trusted Codex Interrupt hook');
             if (confirmed) {
-              this.state.lifecycle = 'paused'; this.state.writer = false;
+              setPhase(this.state, 'paused'); this.state.writer = false;
               this.state.stop_request = { ...(this.state.stop_request as object), status: 'confirmed' };
               await this.store.releaseWriter(this.state.run_id);
               await this.store.removeInterruptDescriptor(this.state.run_id);
