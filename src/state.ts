@@ -6,7 +6,7 @@ import { preparePrivateStorage, privateDirectory } from './private-storage.js';
 
 export interface DecisionCallback { activity_id: string; brief_version: number; fingerprint: string; answer?: { text: string; artifacts: unknown[] } }
 
-export interface RunState { schema: 1; run_id: string; workspace: string; workspace_checkpoint?:WorkspaceCheckpoint; lifecycle: string; writer: boolean; supervisor?: { handle: string; thread?: string; turn?: string; waiting: boolean }; brief?: unknown; brief_version: number; operation_ids: Record<string, unknown>; decision_callbacks?: Record<string, DecisionCallback>; current_operation_id?:string; events: unknown[]; handled_event_ids?: string[]; profile?: unknown; activity_id?: string; activity_kind?: string; pending?: unknown; stop_request?: unknown; report?: unknown; report_id?: string; accepted?: unknown; adapter?: unknown; deadline?: number | null; remaining_ms?: number; }
+export interface RunState { schema: 1; run_id: string; workspace: string; workspace_checkpoint?:WorkspaceCheckpoint; report_checkpoint?:WorkspaceCheckpoint; lifecycle: string; writer: boolean; supervisor?: { handle: string; thread?: string; turn?: string; waiting: boolean }; brief?: unknown; brief_version: number; operation_ids: Record<string, unknown>; decision_callbacks?: Record<string, DecisionCallback>; current_operation_id?:string; events: unknown[]; handled_event_ids?: string[]; profile?: unknown; activity_id?: string; activity_kind?: string; pending?: unknown; stop_request?: unknown; report?: unknown; report_id?: string; accepted?: unknown; adapter?: unknown; deadline?: number | null; remaining_ms?: number; cleanup_pending?: boolean; }
 export class Store {
   readonly dir: string;
   private writes=new Map<string,Promise<void>>();

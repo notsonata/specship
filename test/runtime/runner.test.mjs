@@ -17,7 +17,7 @@ const sharedSessions=new Map();
 
 // Deliberately independent of OpenCode: it uses only the adapter contract and a local callback URL.
 class FakeAdapter {
-  name='fake'; next=1; sessions=new Map(); mode='question'; confirmed=true; errors=[]; reconciles=[];
+  name='fake'; next=1; sessions=new Map(); mode='question'; confirmed=true; errors=[]; reconciles=[]; closeCount=0;
   async validate(p,media){ if(p.model!=='openai/gpt-6-luna')throw Error('wrong model');if(media.some(x=>x==='application/pdf'))throw Error('unsupported media'); }
   async start(_workspace,profile,_kind,callback){const id=`fake-${this.next++}`;const session={callback,profile,events:[],waiters:[],report:false,aborted:false,submissions:0};this.sessions.set(id,session);sharedSessions.set(id,session);return {session:id,version:'fake-1'};}
   async subscribe(){}
@@ -25,6 +25,7 @@ class FakeAdapter {
   async *events(session,signal){const s=this.sessions.get(session);while(!signal.aborted){if(s.events.length){yield s.events.shift();continue;}await new Promise(resolve=>{s.waiters.push(resolve);signal.addEventListener('abort',resolve,{once:true});});}}
   async reconcile(session,message){const s=this.sessions.get(session);this.reconciles.push({message,expected:`message-${s.operation}`,report:s.report});assert.equal(message,`message-${s.operation}`);return s.report?'complete':s.aborted?'unknown':'active';}
   async abort(session){const s=this.sessions.get(session);s.aborted=true;return this.confirmed;}
+  async close(session){this.closeCount++;return this.abort(session);}
   async reply(session,operation,answer){const s=this.sessions.get(session);s.operation=operation;s.submissions++;const r=await fetch(`${s.callback.url}/report_result`,{method:'POST',headers:{authorization:`Bearer ${s.callback.capability}`,'content-type':'application/json'},body:JSON.stringify(report)});if(!r.ok)throw Error(await r.text());s.report=true;s.answer=answer;}
   async snapshot(session){const s=this.sessions.get(session);return {address:'http://127.0.0.1:1',password:'private-fake',version:'fake-1',profile:s.profile,session};}
   async restore(snapshot,callback){const value=snapshot;const s=sharedSessions.get(value.session);if(!s)throw Error('fake session disappeared');s.callback=callback;this.sessions.set(value.session,s);return {session:value.session,version:value.version};}
@@ -67,9 +68,9 @@ test('an unlimited decision survives recovery and a newly configured cap without
   await next.accept(ready.run_id,ready.activity_id,ready.report_id,ready.brief_version,'Independently checked the result after recovery');
 });
 
-test('an explicitly configured assignment limit still stops and reports expiry',async t=>{
+test('an explicitly configured assignment limit still stops, reports expiry, and disposes the execution',async t=>{
   const f=await fixture(t,1);f.adapter.submit=async(session,operation)=>{f.adapter.sessions.get(session).operation=operation;return {messageId:`message-${operation}`};};
-  const event=await f.runner.dispatch({operation_id:'bounded-wait',kind:'implement',brief});assert.equal(event.kind,'limit_reached');assert.equal(event.payload.stop_confirmed,true);assert.equal((await f.store.load(event.run_id)).writer,false);
+  const event=await f.runner.dispatch({operation_id:'bounded-wait',kind:'implement',brief});assert.equal(event.kind,'limit_reached');assert.equal(event.payload.stop_confirmed,true);assert.equal((await f.store.load(event.run_id)).writer,false);assert.equal(f.adapter.closeCount,1);assert.equal(f.runner.active.size,0);
 });
 
 test('dispatch -> durable question -> reply -> report -> independent accept',async t=>{const f=await fixture(t,30);const event=await f.runner.dispatch({workspace:f.root,operation_id:'op-1',kind:'implement',brief});assert.equal(event.kind,'decision_required');assert.equal(event.payload.id,'q-op-1');const result=await f.runner.reply({run_id:event.run_id,request_id:'q-op-1',operation_id:'reply-1',answer:'Choose A',expected_brief_version:event.brief_version});assert.equal(result.kind,'implementation_ready',JSON.stringify({errors:f.adapter.errors,sessions:[...f.adapter.sessions.values()],reconciles:f.adapter.reconciles.slice(-2),state:await f.store.load(event.run_id)}));const state=await f.store.load(event.run_id);assert.equal(state.lifecycle,'awaiting_review');assert.equal(state.writer,false);await assert.rejects(f.runner.accept(event.run_id,event.activity_id,'stale-report',event.brief_version,'independent review evidence'),/stale/);await f.runner.accept(event.run_id,event.activity_id,result.report_id,event.brief_version,'Spec independently reviewed current source and tests');assert.equal((await f.store.load(event.run_id)).lifecycle,'completed');});
@@ -90,13 +91,30 @@ test('failed server cleanup blocks acceptance without losing the report or attac
   assert.equal((await f.store.load(ready.run_id)).lifecycle,'completed');
 });
 
+test('a terminal run cannot be dispatched again',async t=>{
+  const f=await fixture(t,30);const question=await f.runner.dispatch({operation_id:'terminal-first',kind:'implement',brief});
+  const ready=await f.runner.reply({run_id:question.run_id,request_id:question.payload.id,operation_id:'terminal-answer',answer:'A',expected_brief_version:question.brief_version});
+  await f.runner.accept(question.run_id,question.activity_id,ready.report_id,question.brief_version,'independent review');
+  await assert.rejects(f.runner.dispatch({run_id:question.run_id,supervisor_handle:question.supervisor_handle,operation_id:'terminal-again',kind:'correct',corrections:['no'],expected_brief_version:ready.brief_version}),/terminal/);
+});
+
+test('a failed correction before submission restores the prior review state',async t=>{
+  const f=await fixture(t,30);const question=await f.runner.dispatch({operation_id:'rollback-first',kind:'implement',brief});
+  const ready=await f.runner.reply({run_id:question.run_id,request_id:question.payload.id,operation_id:'rollback-answer',answer:'A',expected_brief_version:question.brief_version});
+  const before=await f.store.load(question.run_id);
+  f.adapter.snapshot=async()=>{throw new Error('snapshot failed before submission');};
+  await assert.rejects(f.runner.dispatch({run_id:question.run_id,supervisor_handle:question.supervisor_handle,operation_id:'rollback-correction',kind:'correct',corrections:['fix'],expected_brief_version:ready.brief_version}),/snapshot failed/);
+  const after=await f.store.load(question.run_id);
+  assert.equal(after.lifecycle,'awaiting_review');assert.equal(after.report_id,before.report_id);assert.equal(after.brief_version,before.brief_version);assert.equal(after.writer,false);assert.deepEqual(after.report,before.report);assert.equal(after.operation_ids['rollback-correction'],undefined);
+});
+
 test('duplicate operation IDs are idempotent and stale replies fail closed',async t=>{const f=await fixture(t,30);const event=await f.runner.dispatch({operation_id:'same',kind:'implement',brief});assert.equal(event.kind,'decision_required');const duplicate=await f.runner.dispatch({operation_id:'same',kind:'implement',brief});assert.equal(duplicate.event_id,event.event_id);await assert.rejects(f.runner.reply({run_id:event.run_id,request_id:'old',operation_id:'reply',answer:'no',expected_brief_version:event.brief_version}),/Stale request ID/);});
 
 test('active workspace lease rejects a concurrent independent run',async t=>{const f=await fixture(t,30);const event=await f.runner.dispatch({operation_id:'writer',kind:'implement',brief});assert.equal(event.kind,'decision_required');await assert.rejects(f.runner.dispatch({operation_id:'second',kind:'implement',brief}),/Workspace writer is owned/);assert.equal((await f.store.load(event.run_id)).writer,true);});
 
 test('ambiguous submission is not replayed on duplicate operation ID',async t=>{const f=await fixture(t);const original=f.adapter.submit.bind(f.adapter);f.adapter.submit=async()=>{throw new Error('connection lost after send may have occurred');};await assert.rejects(f.runner.dispatch({operation_id:'ambiguous',kind:'implement',brief}),/connection lost/);await assert.rejects(f.runner.dispatch({operation_id:'ambiguous',kind:'implement',brief}),/already prepared\/submitted/);f.adapter.submit=original;});
 
-test('cancellation requires adapter stop confirmation and never manufactures success',async t=>{const f=await fixture(t);f.adapter.submit=async(session,operation)=>{f.adapter.sessions.get(session).operation=operation;return {messageId:`message-${operation}`};};const ctrl=new AbortController();const pending=f.runner.dispatch({operation_id:'cancel',kind:'implement',brief},undefined,ctrl.signal);await new Promise(r=>setTimeout(r,30));ctrl.abort();const event=await pending;assert.equal(event.kind,'paused');const state=await f.store.load(event.run_id);assert.equal(state.lifecycle,'paused');assert.equal(state.writer,false);});
+test('cancellation requires adapter stop confirmation, disposes the pump, and never manufactures success',async t=>{const f=await fixture(t);f.adapter.submit=async(session,operation)=>{f.adapter.sessions.get(session).operation=operation;return {messageId:`message-${operation}`};};const ctrl=new AbortController();const pending=f.runner.dispatch({operation_id:'cancel',kind:'implement',brief},undefined,ctrl.signal);await new Promise(r=>setTimeout(r,30));ctrl.abort();const event=await pending;assert.equal(event.kind,'paused');const state=await f.store.load(event.run_id);assert.equal(state.lifecycle,'paused');assert.equal(state.writer,false);assert.equal(f.adapter.closeCount,1);assert.equal(f.runner.active.size,0);await f.runner.close();assert.equal(f.adapter.closeCount,1);});
 
 test('unverified stop retains writer ownership and reports failure',async t=>{const f=await fixture(t);f.adapter.confirmed=false;f.adapter.submit=async(session,operation)=>{f.adapter.sessions.get(session).operation=operation;return {messageId:`message-${operation}`};};const ctrl=new AbortController();const pending=f.runner.dispatch({operation_id:'unconfirmed',kind:'implement',brief},undefined,ctrl.signal);await new Promise(r=>setTimeout(r,30));ctrl.abort();await assert.rejects(pending,/Stop could not be verified/);await assert.rejects(f.runner.dispatch({operation_id:'other',kind:'implement',brief}),/Workspace writer is owned/);});
 

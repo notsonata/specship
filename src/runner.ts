@@ -10,8 +10,10 @@ import type { RunnerConfig } from './contracts.js';
 import { checkpoint, changedPaths } from './workspace.js';
 import { LONG_TOOL_TIMEOUT_MS } from './timeouts.js';
 
+type ActiveExecution = { hub: CallbackHub; session: string; aborter: AbortController; eventAbort: AbortController; state: RunState; waiting: boolean; timer?: NodeJS.Timeout; stopping?: Promise<boolean>; pump?: Promise<void>; closing?: boolean; disposed?: boolean };
+
 export class Runner {
-  private active = new Map<string, { hub: CallbackHub; session: string; aborter: AbortController; eventAbort: AbortController; state: RunState; waiting: boolean; timer?: NodeJS.Timeout; stopping?: Promise<boolean> }>();
+  private active = new Map<string, ActiveExecution>();
   constructor(private store: Store, private config: RunnerConfig, private adapter: ShipAdapter) {}
   profiles(){return this.config.ship;}
   private async media(workspace: string, refs: unknown[] = []) {
@@ -24,7 +26,7 @@ export class Runner {
     return verified;
   }
   async dispatch(input:{workspace?:string;operation_id:string;run_id?:string;kind:ActivityKind;ship_profile?:string;assignment?:string;brief?:unknown;artifacts?:unknown[];corrections?:string[];expected_brief_version?:number;supervisor_handle?:string},meta?:{thread?:string;turn?:string},signal?:AbortSignal):Promise<MaterialEvent>{
-    const release=await this.store.lock();let state:RunState|undefined;let hub:CallbackHub|undefined;let started=false;const aborter=new AbortController();
+    const release=await this.store.lock();let state:RunState|undefined;let hub:CallbackHub|undefined;let started=false;let returned:MaterialEvent|undefined;let submitAttempted=false;let previousReview:any;const aborter=new AbortController();
     const cancel=()=>aborter.abort();signal?.addEventListener('abort',cancel,{once:true});
     try{
       if(input.workspace&&resolve(input.workspace)!==resolve(this.store.workspace))throw new Error('Dispatch workspace must match the configured MCP workspace');
@@ -33,9 +35,12 @@ export class Runner {
        if(!input.run_id&&this.active.size)throw new Error('Workspace writer is owned by an attached Ship context; accept or cancel it before starting another run');
        const attached = input.run_id ? this.active.get(input.run_id) : undefined;
         state = attached?.state ?? (input.run_id ? await this.store.load(input.run_id) : await this.store.create());
+       if(input.kind==='correct'&&!input.run_id)throw new Error('A correction requires the exact existing run_id');
+       if(['completed','cancelled','failed'].includes(state.lifecycle))throw new Error(`Run is terminal (${state.lifecycle}); dispatch a new run instead`);
        if(attached){if(input.supervisor_handle!==state.supervisor?.handle)throw new Error('Exact supervisor_handle is required');this.bindCaller(state,meta);}
        if(state.operation_ids[input.operation_id]){const recorded=state.operation_ids[input.operation_id] as any;if(recorded.fingerprint&&recorded.fingerprint!==fingerprint)throw new Error('Operation ID was reused with different dispatch input');const event=recorded.result??recorded;if(event.event_id)return event as MaterialEvent;throw new Error('Operation was already prepared/submitted; reconcile its exact saved adapter message instead of replaying');}
       if(state.writer)throw new Error('A Ship writer is already active');if(input.expected_brief_version!==undefined&&input.expected_brief_version!==state.brief_version)throw new Error('Stale brief version');
+      if(state.lifecycle==='awaiting_review')previousReview={report:state.report,report_id:state.report_id,pending:state.pending,brief:state.brief,brief_version:state.brief_version,lifecycle:state.lifecycle,activity_id:state.activity_id,activity_kind:state.activity_kind,profile:state.profile,deadline:state.deadline,current_operation_id:state.current_operation_id,workspace_checkpoint:state.workspace_checkpoint,adapter:state.adapter};
        let nextBrief=state.brief;
        if(input.kind!=='explore'){const parsed=Brief.parse(input.brief??state.brief);const artifacts=await materializeArtifacts(this.store.workspace,parsed.artifacts??[]);nextBrief={...parsed,artifacts};}
        else nextBrief={artifacts:await materializeArtifacts(this.store.workspace,input.artifacts??[])};
@@ -47,6 +52,7 @@ export class Runner {
         state.supervisor={handle:state.supervisor?.handle??randomUUID(),thread:meta?.thread??state.supervisor?.thread,turn:meta?.turn??state.supervisor?.turn,waiting:true};
         state.report = undefined;
         state.report_id = undefined;
+        state.report_checkpoint = undefined;
        state.pending = undefined;
         state.operation_ids[input.operation_id]={fingerprint,status:'prepared',activity_id:state.activity_id,operation_id:input.operation_id};
         state.current_operation_id=input.operation_id;
@@ -67,17 +73,18 @@ export class Runner {
           state.adapter={adapter:this.adapter.name,session:native.session,version:native.version,message_id:null,operation_id:input.operation_id};
          eventAbort = new AbortController();
          await this.adapter.subscribe(session,eventAbort.signal);
-         const pump=this.consume(session,eventAbort.signal,hub,state).catch(e=>{void this.store.emit(state!,'execution_failed',{message:String(e)});});
-           this.active.set(state.run_id,{hub,session,aborter,eventAbort,state,waiting:true});
+         const controller: ActiveExecution = {hub,session,aborter,eventAbort,state,waiting:true};
+         this.active.set(state.run_id,controller);
+         controller.pump=this.consume(session,eventAbort.signal,hub,state,controller);
            await this.publishDescriptor(state,hub);
            this.scheduleDeadline(state.run_id);
-         void pump;
         }
         await this.publishDescriptor(state,hub);
         if(this.adapter.snapshot)await this.store.writePrivate(state.run_id,'adapter.json',await this.adapter.snapshot(session));
         const prompt=JSON.stringify({kind:input.kind,assignment:input.assignment,brief:state.brief,corrections:input.corrections,activity_id:state.activity_id});
         state.operation_ids[input.operation_id]={fingerprint,status:'submission_pending',activity_id:state.activity_id,session,operation_id:input.operation_id};
         await this.store.save(state);
+       submitAttempted=true;
        const submitted=await this.adapter.submit(session,input.operation_id,prompt,media);
         state.adapter={adapter:this.adapter.name,session:native.session,version:native.version,message_id:submitted.messageId,operation_id:input.operation_id};
        await this.store.save(state);
@@ -90,25 +97,34 @@ export class Runner {
        await this.store.save(state);
        if(input.kind==='explore'&&event.kind==='exploration_completed'){
          if(activeController.timer)clearTimeout(activeController.timer);
-         await this.adapter.close?.(session);eventAbort.abort();await hub.close();this.active.delete(state.run_id);
+         await this.disposeActive(state.run_id,true);
        }
+       returned=event;
        return event;
     } catch (error) {
       if (state && started) {
         const active = this.active.get(state.run_id);
+        if (previousReview && !submitAttempted) {
+          Object.assign(state, previousReview);
+          delete state.operation_ids[input.operation_id];
+          state.writer = false;
+          state.cleanup_pending = false;
+          if (state.supervisor) state.supervisor.waiting = false;
+          await this.store.releaseWriter(state.run_id).catch(() => {});
+          await this.store.removeInterruptDescriptor(state.run_id).catch(() => {});
+          if (active) await this.disposeActive(state.run_id, true).catch(() => {});
+          await this.store.save(state).catch(() => {});
+          throw error;
+        }
         if (active) {
-          const stopped = this.adapter.close
-            ? await this.adapter.close(active.session).catch(() => false)
-            : await this.adapter.abort(active.session).catch(() => false);
+          const stopped = await this.stop(active);
           if (stopped) {
             state.writer = false;
             state.lifecycle = 'paused';
             await this.store.releaseWriter(state.run_id).catch(() => {});
             await this.store.emit(state, 'paused', { reason: 'runner error; adapter stop confirmed' }).catch(() => {});
-            active.eventAbort.abort();
-            await active.hub.close();
-            this.active.delete(state.run_id);
-          }
+            if (!await this.disposeActive(state.run_id, true)) state.cleanup_pending = true;
+          } else state.cleanup_pending = true;
         } else {state.lifecycle='failed';state.writer=false;await this.store.releaseWriter(state.run_id).catch(()=>{});}
         await this.store.save(state).catch(() => {});
       }
@@ -116,27 +132,57 @@ export class Runner {
     }
     finally {
       signal?.removeEventListener('abort', cancel);
-      if (state?.lifecycle === 'failed' || state?.lifecycle === 'paused' || state?.lifecycle === 'awaiting_review' && !this.active.has(state.run_id)) this.active.delete(state.run_id);
-      if (!state||!this.active.has(state.run_id)) await hub?.close();
+      const active = state ? this.active.get(state.run_id) : undefined;
+      if (active && (state!.lifecycle === 'paused' || state!.lifecycle === 'limit_reached' || state!.lifecycle === 'cancelled' || state!.lifecycle === 'failed')) {
+        if (!await this.disposeActive(state!.run_id, true)) { state!.cleanup_pending = true; await this.store.save(state!).catch(() => {}); }
+      }
+      if (!state || !this.active.has(state.run_id)) await hub?.close();
       await release();
     }
   }
-  private async consume(session:string,signal:AbortSignal,_hub:CallbackHub,state:RunState):Promise<void>{
-    for await(const e of this.adapter.events(session,signal)){
-      if(e.type==='permission'){
-        const data=e.data as any;const id=data.permissionID??data.id??data.requestID;
-        if(!id||(state.pending as any)?.id===id)continue;
-        state.pending={kind:'permission',id,body:data};await this.store.emit(state,'user_input_required',data);
+  private async disposeActive(runId:string, closeAdapter:boolean):Promise<boolean>{
+    const active=this.active.get(runId);
+    if(!active)return true;
+    if(active.disposed)return true;
+    active.closing=true;
+    if(active.timer){clearTimeout(active.timer);active.timer=undefined;}
+    active.eventAbort.abort();
+    if(active.pump)await active.pump.catch(()=>{});
+    await active.hub.close().catch(()=>{});
+    if(closeAdapter){
+      const closed=this.adapter.close
+        ? await this.adapter.close(active.session).catch(()=>false)
+        : await this.adapter.abort(active.session).catch(()=>false);
+      if(!closed){active.closing=false;return false;}
+    }
+    active.disposed=true;
+    this.active.delete(runId);
+    return true;
+  }
+  private async disposeAfterTerminalEvent(state:RunState):Promise<void>{
+    if(!this.active.has(state.run_id))return;
+    if(!await this.disposeActive(state.run_id,true)){state.cleanup_pending=true;await this.store.save(state).catch(()=>{});}
+  }
+  private async consume(session:string,signal:AbortSignal,_hub:CallbackHub,state:RunState,active?:ActiveExecution):Promise<void>{
+    try{
+      for await(const e of this.adapter.events(session,signal)){
+        if(e.type==='permission'){
+          const data=e.data as any;const id=data.permissionID??data.id??data.requestID;
+          if(!id||(state.pending as any)?.id===id)continue;
+          state.pending={kind:'permission',id,body:data};await this.store.emit(state,'user_input_required',data);
+        }
+        if(e.type==='error'){
+          const expectedAbort=(e.data as any)?.error?.name==='MessageAbortedError'&&((state.stop_request as any)?.status==='requested'||active?.stopping);
+          if(!expectedAbort)await this.store.emit(state,'execution_failed',e.data);
+        }
       }
-      if(e.type==='error'){
-        const expectedAbort=(e.data as any)?.error?.name==='MessageAbortedError'&&((state.stop_request as any)?.status==='requested'||this.active.get(state.run_id)?.stopping);
-        if(!expectedAbort)await this.store.emit(state,'execution_failed',e.data);
-      }
+    }catch(error){
+      if(!active?.closing&&!signal.aborted)await this.store.emit(state,'execution_failed',{message:String(error)}).catch(()=>{});
     }
   }
   private async publishDescriptor(state:RunState,hub:CallbackHub):Promise<void>{const {thread,turn}=state.supervisor??{};if(thread&&turn)await this.store.publishInterruptDescriptor({run_id:state.run_id,session_id:thread,turn_id:turn,url:hub.url,capability:hub.token});await hub.refreshDescriptor();}
   private scheduleDeadline(runId:string):void{const active=this.active.get(runId);if(!active||active.timer||active.state.deadline==null)return;const delay=Math.max(0,Math.min(LONG_TOOL_TIMEOUT_MS,active.state.deadline-Date.now()));active.timer=setTimeout(()=>{active.timer=undefined;if(active.state.deadline!=null&&Date.now()>=active.state.deadline)void this.expire(runId);else this.scheduleDeadline(runId);},delay);}
-  private async stop(active:{hub:CallbackHub;session:string;state:RunState;stopping?:Promise<boolean>}):Promise<boolean>{if(!active.stopping)active.stopping=this.adapter.abort(active.session).catch(()=>false);const confirmed=await active.stopping;if(confirmed)active.hub.detachPending();return confirmed;}
+  private async stop(active:ActiveExecution):Promise<boolean>{if(!active.stopping)active.stopping=this.adapter.abort(active.session).catch(()=>false);const confirmed=await active.stopping;if(confirmed)active.hub.detachPending();return confirmed;}
   private async expire(runId:string):Promise<void>{const active=this.active.get(runId);if(!active||active.state.deadline==null)return;const state=active.state;if(state.events.some((event:any)=>event.kind==='limit_reached'&&event.activity_id===state.activity_id))return;const stopped=await this.stop(active);if(stopped){state.writer=false;state.lifecycle='paused';if(active.timer)clearTimeout(active.timer);await this.store.releaseWriter(runId);await this.store.removeInterruptDescriptor(runId);await this.store.emit(state,'limit_reached',{max_dispatch_seconds:this.config.limits.max_dispatch_seconds,stop_confirmed:true});}else{await this.store.emit(state,'limit_reached',{max_dispatch_seconds:this.config.limits.max_dispatch_seconds,stop_confirmed:false,writer_retained:true});}}
   private bindCaller(state:RunState,meta?:{thread?:string;turn?:string}):void{if(!meta?.thread&&!meta?.turn)return;if(meta.thread&&state.supervisor?.thread&&meta.thread!==state.supervisor.thread)throw new Error('Run belongs to a different native Codex chat');if(meta.thread)state.supervisor!.thread=meta.thread;if(meta.turn)state.supervisor!.turn=meta.turn;}
   async assertSupervisor(runId:string,handle:string|undefined,meta?:{thread?:string;turn?:string}):Promise<void>{const active=this.active.get(runId);if(!active)throw new Error('Run is not attached in this process; use specship_wait with recover=true and the saved supervisor_handle');if(!handle||handle!==active.state.supervisor?.handle)throw new Error('Exact supervisor_handle is required');this.bindCaller(active.state,meta);await this.store.save(active.state);await this.publishDescriptor(active.state,active.hub);}
@@ -254,6 +300,7 @@ export class Runner {
         await this.store.releaseWriter(state.run_id);
         await this.store.removeInterruptDescriptor(state.run_id);
         const paused = await this.store.emit(state, 'paused', { reason: 'supervisor cancellation' }) as MaterialEvent;
+        await this.disposeAfterTerminalEvent(state);
         return paused;
       }
 
@@ -266,10 +313,11 @@ export class Runner {
       if (material) {
         if(material.kind==='decision_required')state.lifecycle='awaiting_spec';else if(material.kind==='user_input_required')state.lifecycle='awaiting_user';
         await this.store.save(state);
+        if(material.kind==='paused'||material.kind==='limit_reached')await this.disposeAfterTerminalEvent(state);
         return material;
       }
 
-      if(end!=null&&Date.now()>=end){await this.expire(state.run_id);const limit=state.events.find((event:any)=>event.activity_id===state.activity_id&&['limit_reached','execution_failed'].includes(event.kind));if(limit)return limit as MaterialEvent;}
+      if(end!=null&&Date.now()>=end){await this.expire(state.run_id);const limit=state.events.find((event:any)=>event.activity_id===state.activity_id&&['limit_reached','execution_failed'].includes(event.kind));if(limit){if((limit as any).kind==='limit_reached')await this.disposeAfterTerminalEvent(state);return limit as MaterialEvent;}}
 
       if (state.report) {
         const report = state.report as Report;
@@ -277,6 +325,20 @@ export class Runner {
         const quiescence = await this.adapter.reconcile(session, messageId);
         if (quiescence === 'complete') {
           state.writer = false;
+          const currentCheckpoint = await checkpoint(this.store.workspace);
+          const drift = state.report_checkpoint && currentCheckpoint ? changedPaths(state.report_checkpoint, currentCheckpoint) : [];
+          if (drift.length) {
+            const active = this.active.get(state.run_id);
+            const stopped = active ? await this.stop(active) : true;
+            if (!stopped) {
+              await this.store.emit(state, 'execution_failed', { reason: 'Workspace changed after the implementation report and Ship stop is unconfirmed', evidence: drift.slice(0, 100) });
+              return state.events.at(-1) as MaterialEvent;
+            }
+            state.lifecycle = 'awaiting_spec';
+            state.pending = { kind: 'recovery_review', id: randomUUID(), body: { blocker: 'Workspace files changed after the implementation report; the saved validation is no longer current.', evidence: drift.slice(0, 100), attempts: ['Compared the report checkpoint with the current workspace'], decision: 'Review the changed files and specify the authorized continuation and validation.' } };
+            await this.store.releaseWriter(state.run_id);
+            return await this.store.emit(state, 'decision_required', { report, ...(state.pending as any) }) as MaterialEvent;
+          }
           const isExploration = state.activity_kind === 'explore';
           const status = 'status' in report ? report.status : undefined;
           state.lifecycle = !isExploration && status === 'ready_for_review' ? 'awaiting_review' : !isExploration&&status==='needs_decision'?'awaiting_spec':'idle';
@@ -305,8 +367,9 @@ export class Runner {
     if (permission && !input.defer_to_user && input.answer !== 'reject') throw new Error('Native permission grants are disabled through Specship. The user must configure permissions directly in OpenCode; Spec may only reject, pause, or cancel.');
     if(question.kind==='report'){
       if((state.report as any)?.status!=='needs_decision')throw new Error('The current report has no pending decision; review, correct, or accept it');
-      state.report=undefined;state.report_id=undefined;
+      state.report=undefined;state.report_id=undefined;state.report_checkpoint=undefined;
     }
+    if(question.kind==='recovery_review'){state.report=undefined;state.report_id=undefined;state.report_checkpoint=undefined;}
     if(active.waiting)throw new Error('Another supervisor wait is active for this run');
     if(input.defer_to_user){state.pending={...question,kind:permission?'permission':'deferred'};state.lifecycle='awaiting_user';state.supervisor!.waiting=false;const event=await this.store.emit(state,'user_input_required',{request_id:input.request_id,...(permission?{id:input.request_id}:{}),reason:'decision deferred to user'} ) as MaterialEvent;state.operation_ids[input.operation_id]={fingerprint,result:event};await this.store.save(state);return event;}
     if (input.brief) { const parsed=Brief.parse(input.brief);state.brief={...parsed,artifacts:await materializeArtifacts(this.store.workspace,parsed.artifacts??[])};state.brief_version++; }
@@ -370,6 +433,7 @@ export class Runner {
     if(state.lifecycle!=='awaiting_review'||state.writer||state.pending&&['question','permission','deferred','recovery_review'].includes((state.pending as any).kind)||state.activity_id!==activityId||state.report_id!==reportId||state.brief_version!==briefVersion||!state.report||!evidence.trim())throw new Error('Acceptance is stale, blocked, or has no independent review evidence');
     const current=await checkpoint(this.store.workspace);
     if(state.workspace_checkpoint&&current&&changedPaths(state.workspace_checkpoint,current).length)throw new Error('Workspace changed since this report; review the changes and obtain fresh validation before accepting');
+    if(state.report_checkpoint&&current&&changedPaths(state.report_checkpoint,current).length)throw new Error('Workspace changed after this report; review the changes and obtain fresh validation before accepting');
     if(active){
       if(active.timer)clearTimeout(active.timer);
       const stopped=await this.adapter.close?.(active.session);
@@ -429,27 +493,25 @@ export class Runner {
     await this.store.save(state);
     await this.store.releaseWriter(state.run_id);
     await this.store.removeInterruptDescriptor(state.run_id);
-    if(input.action==='cancel'){if(await this.adapter.close?.(active.session)===false)throw new Error('Ship is idle but its owned server could not be closed');active.eventAbort.abort();await active.hub.close();this.active.delete(input.run_id);}
+    if(input.action==='cancel'){if(!await this.disposeActive(input.run_id,true))throw new Error('Ship is idle but its owned server could not be closed');}
     return event;
   }
   async close(): Promise<void> {
-    for (const active of this.active.values()) {
-      if(active.timer)clearTimeout(active.timer);
+    for (const runId of [...this.active.keys()]) {
+      const active = this.active.get(runId);
+      if (!active) continue;
       const state = active.state;
-      if(active.timer)clearTimeout(active.timer);
-      const stopped = this.adapter.close
-        ? await this.adapter.close(active.session).catch(() => false)
-        : await this.adapter.abort(active.session).catch(() => false);
+      const stopped = await this.disposeActive(runId, true);
       if (stopped && state.lifecycle !== 'awaiting_review' && state.lifecycle !== 'completed') {
         state.writer = false;
         state.lifecycle = 'paused';
         await this.store.releaseWriter(state.run_id);
         await this.store.emit(state, 'paused', { reason: 'runner closed; Ship stop confirmed' });
         await this.store.removeInterruptDescriptor(state.run_id);
+      } else if (!stopped) {
+        state.cleanup_pending = true;
+        await this.store.save(state).catch(() => {});
       }
-      active.eventAbort.abort();
-      await active.hub.close();
     }
-    this.active.clear();
   }
 }
