@@ -265,6 +265,7 @@ export class DeepSeekAdapter implements ShipAdapter {
       state.stopReason = typeof result?.stopReason === 'string' ? result.stopReason : undefined;
       this.currentPrompt = undefined;
       for (const wake of state.settleWaiters.splice(0)) wake();
+      this.push(session, { type: 'idle', session });
     }).catch(error => {
       state.settled = true;
       state.error = error instanceof Error ? error : new Error(String(error));

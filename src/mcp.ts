@@ -56,9 +56,10 @@ export async function serveSpec(runner: Runner, store: Store): Promise<void> {
   }));
   server.registerTool('specship_inspect', {
     description: 'Inspect a bounded explicit section or list recovery candidates; not status polling.',
-    inputSchema: { workspace: z.string(), run_id: z.string().optional(), section: z.enum(['brief', 'evidence', 'artifacts', 'profiles', 'logs', 'recovery']), offset: z.number().int().nonnegative().optional(), limit: z.number().int().positive().max(100).optional() },
+    inputSchema: { workspace: z.string(), run_id: z.string().optional(), section: z.enum(['brief', 'evidence', 'artifacts', 'profiles', 'logs', 'recovery']), purpose: z.enum(['review', 'recovery', 'decision']).optional(), offset: z.number().int().nonnegative().optional(), limit: z.number().int().positive().max(100).optional() },
   }, guarded(async args => {
     workspaceMatches(args.workspace, store.workspace);
+    await runner.noteInspection(args.run_id, args.purpose, args.section);
     const offset = args.offset ?? 0, limit = args.limit ?? 20;
     if (!args.run_id) {
       if(args.section==='profiles')return output(runner.profiles());

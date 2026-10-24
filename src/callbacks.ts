@@ -17,6 +17,12 @@ export class CallbackHub {
   private base = '';
   private answer?: { id: string; promise: Promise<Answer>; resolve: (value: Answer) => void; reject: (error: Error) => void };
   private waiting = new Set<ServerResponse>();
+  private detachIfUnanswered(): void {
+    if (this.waiting.size || !this.answer) return;
+    const pending = this.answer;
+    this.answer = undefined;
+    pending.reject(new Error('Callback client disconnected before the supervisor answered'));
+  }
   constructor(private store: Store, private state: RunState, private stopExecution: (reason: string) => Promise<boolean> = async () => false, private deliveryMarginMs=120_000) {}
   get token(){return this.capability;}
   get url(){return this.base;}
@@ -44,7 +50,7 @@ export class CallbackHub {
           }
           if (this.answer && this.answer.id !== question.request_id) throw new Error('A decision callback is already pending');
           this.waiting.add(res);
-          res.once('close', () => this.waiting.delete(res));
+          res.once('close', () => { this.waiting.delete(res); this.detachIfUnanswered(); });
           let response = this.answer?.promise;
           if (!this.answer) {
             const pending = this.state.pending as any;
@@ -104,6 +110,10 @@ export class CallbackHub {
         if (!res.destroyed && !res.writableEnded) res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: error instanceof Error ? error.message : 'invalid request' }));
       }
     });
+    this.server.requestTimeout = 30_000;
+    this.server.headersTimeout = 10_000;
+    this.server.keepAliveTimeout = 5_000;
+    this.server.maxConnections = 32;
     await new Promise<void>((resolve, reject) => this.server!.once('error', reject).listen(0, '127.0.0.1', resolve));
     const port = (this.server.address() as any).port;
     this.base = `http://127.0.0.1:${port}`;
@@ -134,7 +144,9 @@ export class CallbackHub {
     record.answer = answer;
   }
   async release(answer: string, images: Array<{ mime: string; name: string; data: Buffer }>): Promise<void> {
-    if (!this.answer) throw new Error('No active callback is waiting');
+    // A detached callback has already been persisted by recordAnswer. There is no
+    // live HTTP waiter to resolve; the supervisor continuation path owns delivery.
+    if (!this.answer) return;
     const { resolve } = this.answer; this.answer = undefined;
     resolve({ text: answer, images });
   }

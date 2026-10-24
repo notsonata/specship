@@ -83,6 +83,21 @@ test('a lost HTTP response replays the saved answer after restart without reopen
   assert.equal((await post(hub, '/ask_spec', question)).status, 400);
 });
 
+test('a disconnected callback is detached and a later retry replays the durable answer', async t => {
+  const f = await fixture(t);
+  const abort = new AbortController();
+  const lost = post(f.hub, '/ask_spec', question, abort.signal).catch(() => undefined);
+  await pending(f.state);
+  abort.abort();
+  await lost;
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(f.hub.waitingForAnswer, false);
+  await answer(f);
+  const replay = await post(f.hub, '/ask_spec', question);
+  assert.equal(replay.status, 200);
+  assert.deepEqual(await replay.json(), { text: 'Ascending', images: [] });
+});
+
 test('an unanswered retry reattaches after restart without another event', async t => {
   const f = await fixture(t);
   const old = post(f.hub, '/ask_spec', question);

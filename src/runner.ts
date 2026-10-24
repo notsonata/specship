@@ -1,6 +1,8 @@
-import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
-import { Brief, type ActivityKind, type MaterialEvent, type Profile, type Report } from './contracts.js';
+import { createHash, randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { realpath } from 'node:fs/promises';
+import { relative, resolve, sep } from 'node:path';
+import { Brief, type ActivityKind, type CheckDefinition, type MaterialEvent, type Profile, type Report } from './contracts.js';
 import { resolveProfile } from './config.js';
 import { materializeArtifacts, MAX_ARTIFACT_BYTES, verifyArtifact } from './artifacts.js';
 import { Store, type RunState } from './state.js';
@@ -45,7 +47,11 @@ export class Runner {
       if(state.writer)throw new Error('A Ship writer is already active');if(input.expected_brief_version!==undefined&&input.expected_brief_version!==state.brief_version)throw new Error('Stale brief version');
       if(state.lifecycle==='awaiting_review')previousReview={report:state.report,report_id:state.report_id,pending:state.pending,brief:state.brief,brief_version:state.brief_version,lifecycle:state.lifecycle,activity_id:state.activity_id,activity_kind:state.activity_kind,profile:state.profile,deadline:state.deadline,current_operation_id:state.current_operation_id,workspace_checkpoint:state.workspace_checkpoint,adapter:state.adapter};
        let nextBrief=state.brief;
-       if(input.kind!=='explore'){const parsed=Brief.parse(input.brief??state.brief);const artifacts=await materializeArtifacts(this.store.workspace,parsed.artifacts??[]);nextBrief={...parsed,artifacts};}
+       if(input.kind!=='explore'){
+         const parsed=Brief.parse(input.brief??state.brief);const artifacts=await materializeArtifacts(this.store.workspace,parsed.artifacts??[]);nextBrief={...parsed,artifacts};
+         for(const id of parsed.required_checks??[])if(!this.config.checks?.[id])throw new SpecshipError('CAPABILITY_UNSUPPORTED',`Acceptance check '${id}' is not configured in .specship/config.json`);
+         const criteria=parsed.acceptance_criteria??[];if(new Set(criteria.map(item=>item.id)).size!==criteria.length)throw new SpecshipError('CAPABILITY_UNSUPPORTED','Acceptance criterion IDs must be unique');
+       }
        else nextBrief={artifacts:await materializeArtifacts(this.store.workspace,input.artifacts??[])};
        const selected=resolveProfile(this.config,input.ship_profile);const media=await this.media(this.store.workspace,(nextBrief as any)?.artifacts??[]);await this.adapter.validate(selected.profile,media.map(m=>m.mime));
        if (attached && JSON.stringify(state.profile) !== JSON.stringify({ name: selected.name, ...selected.profile })) throw new Error('A correction must keep the active run profile unchanged');
@@ -56,6 +62,8 @@ export class Runner {
         state.report = undefined;
         state.report_id = undefined;
         state.report_checkpoint = undefined;
+        state.accept_checkpoint = undefined;
+        state.check_results = undefined;
        state.pending = undefined;
         state.operation_ids[input.operation_id]={fingerprint,status:'prepared',activity_id:state.activity_id,operation_id:input.operation_id};
         state.current_operation_id=input.operation_id;
@@ -374,10 +382,17 @@ export class Runner {
           }
           const isExploration = state.activity_kind === 'explore';
           const status = 'status' in report ? report.status : undefined;
+          const checks = !isExploration && status === 'ready_for_review' ? await this.runConfiguredChecks(state) : [];
+          const brief = state.brief as Brief|undefined;
+          const criteria = brief?.acceptance_criteria ?? [];
+          const results = ('status' in report ? (report as any).acceptance_results : undefined) ?? [];
+          const uncovered = criteria.filter(criterion => !results.some((result: any) => result.criterion_id === criterion.id && result.evidence.trim()));
+          const checksPassed = checks.every(check => check.status === 'passed');
+          state.accept_checkpoint = await checkpoint(this.store.workspace);
           setPhase(state, !isExploration && status === 'ready_for_review' ? 'awaiting_review' : !isExploration&&status==='needs_decision'?'awaiting_decision':'idle');
           if (state.lifecycle !== 'awaiting_review') await this.store.releaseWriter(state.run_id);
           const kind = isExploration ? 'exploration_completed' : status === 'ready_for_review' ? 'implementation_ready' : status === 'needs_decision' ? 'decision_required' : 'execution_failed';
-          return await this.store.emit(state, kind, { report,...(status==='needs_decision'?{request_id:state.report_id}:{}) }) as MaterialEvent;
+          return await this.store.emit(state, kind, { report, checks, checks_passed: checksPassed, uncovered_criteria: uncovered.map(item => item.id), ...(status==='needs_decision'?{request_id:state.report_id}:{}) }) as MaterialEvent;
         }
       }
       await this.waitForWake(cell,end,signal);
@@ -401,9 +416,9 @@ export class Runner {
     if (permission && !input.defer_to_user && input.answer !== 'reject') throw new Error('Native permission grants are disabled through Specship. The user must configure permissions directly in OpenCode; Spec may only reject, pause, or cancel.');
     if(question.kind==='report'){
       if((state.report as any)?.status!=='needs_decision')throw new Error('The current report has no pending decision; review, correct, or accept it');
-      state.report=undefined;state.report_id=undefined;state.report_checkpoint=undefined;
+      state.report=undefined;state.report_id=undefined;state.report_checkpoint=undefined;state.accept_checkpoint=undefined;state.check_results=undefined;
     }
-    if(question.kind==='recovery_review'){state.report=undefined;state.report_id=undefined;state.report_checkpoint=undefined;}
+    if(question.kind==='recovery_review'){state.report=undefined;state.report_id=undefined;state.report_checkpoint=undefined;state.accept_checkpoint=undefined;state.check_results=undefined;}
     if(active.waiting)throw new Error('Another supervisor wait is active for this run');
     if(input.defer_to_user){state.pending={...question,kind:permission?'permission':'deferred'};setPhase(state,'awaiting_user');state.supervisor!.waiting=false;const event=await this.store.emit(state,'user_input_required',{request_id:input.request_id,...(permission?{id:input.request_id}:{}),reason:'decision deferred to user'} ) as MaterialEvent;state.operation_ids[input.operation_id]={fingerprint,result:event};await this.store.save(state);return event;}
     if (input.brief) { const parsed=Brief.parse(input.brief);state.brief={...parsed,artifacts:await materializeArtifacts(this.store.workspace,parsed.artifacts??[])};state.brief_version++; }
@@ -456,18 +471,84 @@ export class Runner {
       ['paused','cancelled','limit_reached','execution_failed'].includes(event.kind)
     ));
     const current=relevant.at(-1) as MaterialEvent|undefined;
-    if(current&&current.event_id!==lastEventId)return current;
+    const policy=state.wait_policy??={no_progress:0,inspect_count:0,inspect_window_start:0};
+    if(current){
+      policy.last_event_id=current.event_id;
+      if(current.event_id!==lastEventId){policy.no_progress=0;return current;}
+    }
+    if(recover)policy.no_progress=0;
+    if(lastEventId){
+      policy.no_progress++;
+      if(policy.no_progress>2){await this.store.save(state);throw new SpecshipError('WAIT_WITHOUT_PROGRESS','No new material event followed the supplied last_event_id; stop polling and wait for the delivered event');}
+      await this.store.save(state);
+    }
     if(active.waiting)throw new Error('A blocking supervisor wait is already active');
     active.waiting=true;state.supervisor!.waiting=true;
-    try{const event=await this.blockUntilEvent(state,signal,active.aborter,active.hub,active.session,active.eventAbort,lastEventId);if(active.timer&&['paused','cancelled','completed','awaiting_review','idle'].includes(state.lifecycle)){clearTimeout(active.timer);active.timer=undefined;}return event;}
+    try{const event=await this.blockUntilEvent(state,signal,active.aborter,active.hub,active.session,active.eventAbort,lastEventId);if(active.timer&&['paused','cancelled','completed','awaiting_review','idle'].includes(state.lifecycle)){clearTimeout(active.timer);active.timer=undefined;}policy.no_progress=0;return event;}
     finally{active.waiting=false;state.supervisor!.waiting=false;await this.store.save(state);}
+  }
+  private async runOneCheck(id:string, check:CheckDefinition):Promise<Record<string, unknown>>{
+    const started=Date.now();
+    let cwd:string;
+    try{
+      const workspace=await realpath(this.store.workspace);
+      const requested=resolve(workspace,check.cwd??'.');
+      cwd=await realpath(requested);
+      const rel=relative(workspace,cwd);
+      if(rel==='..'||rel.startsWith(`..${sep}`)||resolve(workspace,rel)!==cwd)throw new Error('Check cwd escapes the workspace');
+    }catch(error){return {id,status:'error',message:String(error),duration_ms:Date.now()-started};}
+    return await new Promise(resolvePromise=>{
+      let stdout='',stderr='',timedOut=false;
+      const stdoutHash=createHash('sha256'),stderrHash=createHash('sha256');
+      const limit=64_000;
+      const command=process.platform==='win32'?process.env.ComSpec??'cmd.exe':'/bin/sh';
+      const args=process.platform==='win32'?['/d','/s','/c',check.command]:['-lc',check.command];
+      let child;
+      try{child=spawn(command,args,{cwd,env:{...process.env},stdio:['ignore','pipe','pipe'],windowsHide:true});}
+      catch(error){resolvePromise({id,status:'error',message:String(error),duration_ms:Date.now()-started});return;}
+      child.stdout?.on('data',chunk=>{stdoutHash.update(chunk);if(stdout.length<limit)stdout+=chunk.toString().slice(0,limit-stdout.length);});
+      child.stderr?.on('data',chunk=>{stderrHash.update(chunk);if(stderr.length<limit)stderr+=chunk.toString().slice(0,limit-stderr.length);});
+      const timeout=Math.max(1,Math.min(check.timeout_ms??120_000,600_000));
+      const timer=setTimeout(()=>{timedOut=true;try{child!.kill();}catch{}},timeout);
+      child.once('error',error=>{clearTimeout(timer);resolvePromise({id,status:'error',message:String(error),duration_ms:Date.now()-started});});
+      child.once('close',(code,signal)=>{clearTimeout(timer);const expected=check.expected_exit??0;const passed=!timedOut&&code===expected;resolvePromise({id,status:passed?'passed':'failed',exit_code:code,signal,expected_exit:expected,timed_out:timedOut,duration_ms:Date.now()-started,stdout_sha256:stdoutHash.digest('hex'),stderr_sha256:stderrHash.digest('hex'),output_summary:`${stdout}\n${stderr}`.trim().slice(-2_000)});});
+    });
+  }
+  private async runConfiguredChecks(state:RunState):Promise<Array<Record<string, unknown>>>{
+    const brief=state.brief as Brief|undefined;const ids=brief?.required_checks??[];
+    if(!ids.length){state.check_results=[];return [];}
+    const results=[];
+    for(const id of ids){const check=this.config.checks?.[id];results.push(check?await this.runOneCheck(id,check):{id,status:'error',message:'check is not configured'});}
+    state.check_results=results;await this.store.save(state);
+    return results;
+  }
+  async noteInspection(runId:string|undefined,purpose:string|undefined,section:string):Promise<void>{
+    if(!runId)return;
+    if(section==='logs'&&!purpose)throw new SpecshipError('INSPECT_PURPOSE_REQUIRED','Inspecting logs requires purpose=review or purpose=recovery');
+    if(purpose&&!['review','recovery','decision'].includes(purpose))throw new SpecshipError('INSPECT_PURPOSE_REQUIRED','Inspection purpose must be review, recovery, or decision');
+    const state=await this.store.load(runId);
+    const policy=state.wait_policy??={no_progress:0,inspect_count:0,inspect_window_start:0};
+    const now=Date.now();
+    if(!policy.inspect_window_start||now-policy.inspect_window_start>=60_000){policy.inspect_window_start=now;policy.inspect_count=0;}
+    if(policy.inspect_count>=30)throw new SpecshipError('INSPECT_RATE_LIMITED','Inspection rate limit reached; use the delivered event or a recovery inspection',{retryable:true});
+    policy.inspect_count++;
+    await this.store.save(state);
   }
   async accept(runId:string,activityId:string,reportId:string,briefVersion:number,evidence:string):Promise<void>{
     const active=this.active.get(runId);const state=active?.state??await this.store.load(runId);
     if(state.lifecycle!=='awaiting_review'||state.writer||state.pending&&['question','permission','deferred','recovery_review'].includes((state.pending as any).kind)||state.activity_id!==activityId||state.report_id!==reportId||state.brief_version!==briefVersion||!state.report||!evidence.trim())throw new Error('Acceptance is stale, blocked, or has no independent review evidence');
+    if(evidence.length>4_000)throw new SpecshipError('ACCEPTANCE_EVIDENCE_INCOMPLETE','Acceptance evidence must be at most 4000 characters');
+    const brief=state.brief as Brief|undefined;const report=state.report as any;
+    const requiredChecks=brief?.required_checks??[];
+    const checks=(state.check_results??[]) as Array<Record<string, unknown>>;
+    if(requiredChecks.length&&(checks.length!==requiredChecks.length||checks.some(check=>check.status!=='passed')))throw new SpecshipError('ACCEPTANCE_CHECKS_FAILED','One or more required acceptance checks did not pass; review the check evidence before accepting');
+    const criteria=brief?.acceptance_criteria??[];const results=report.acceptance_results??[];
+    const uncovered=criteria.filter(criterion=>!results.some((result:any)=>result.criterion_id===criterion.id&&result.evidence.trim()));
+    if(uncovered.length)throw new SpecshipError('ACCEPTANCE_EVIDENCE_INCOMPLETE',`Acceptance evidence is missing for: ${uncovered.map(item=>item.id).join(', ')}`);
     const current=await checkpoint(this.store.workspace);
     if(state.workspace_checkpoint&&current&&changedPaths(state.workspace_checkpoint,current).length)throw new Error('Workspace changed since this report; review the changes and obtain fresh validation before accepting');
-    if(state.report_checkpoint&&current&&changedPaths(state.report_checkpoint,current).length)throw new Error('Workspace changed after this report; review the changes and obtain fresh validation before accepting');
+    const acceptedAt=state.accept_checkpoint??state.report_checkpoint;
+    if(acceptedAt&&current&&changedPaths(acceptedAt,current).length)throw new Error('Workspace changed after this report; review the changes and obtain fresh validation before accepting');
     if(active){
       if(active.timer)clearTimeout(active.timer);
       const stopped=await this.adapter.close?.(active.session);

@@ -119,6 +119,19 @@ test('cancellation requires adapter stop confirmation, disposes the pump, and ne
 
 test('unverified stop retains writer ownership and reports failure',async t=>{const f=await fixture(t);f.adapter.confirmed=false;f.adapter.submit=async(session,operation)=>{f.adapter.sessions.get(session).operation=operation;return {messageId:`message-${operation}`};};const ctrl=new AbortController();const pending=f.runner.dispatch({operation_id:'unconfirmed',kind:'implement',brief},undefined,ctrl.signal);await new Promise(r=>setTimeout(r,30));ctrl.abort();await assert.rejects(pending,/Stop could not be verified/);await assert.rejects(f.runner.dispatch({operation_id:'other',kind:'implement',brief}),/Workspace writer is owned/);});
 
+test('a wait that loops without progress is rejected as polling',async t=>{
+  const f=await fixture(t,30);const q=await f.runner.dispatch({operation_id:'poll-wait',kind:'implement',brief});
+  f.runner.active.get(q.run_id).state.wait_policy={no_progress:2,inspect_count:0,inspect_window_start:0};
+  await assert.rejects(f.runner.wait(q.run_id,q.supervisor_handle,undefined,undefined,q.event_id),/No new material event/);
+});
+
+test('log inspection requires a purpose and the inspection rate limit is enforced',async t=>{
+  const f=await fixture(t,30);const q=await f.runner.dispatch({operation_id:'inspect-policy',kind:'implement',brief});
+  await assert.rejects(f.runner.noteInspection(q.run_id,undefined,'logs'),/purpose/);
+  const state=await f.store.load(q.run_id);state.wait_policy={no_progress:0,inspect_count:30,inspect_window_start:Date.now()};await f.store.save(state);
+  await assert.rejects(f.runner.noteInspection(q.run_id,'review','evidence'),/rate limit/);
+});
+
 test('closing an unresolved callback settles HTTP with failure and preserves the durable question',async t=>{const f=await fixture(t,30);const event=await f.runner.dispatch({operation_id:'close-question',kind:'implement',brief});assert.equal(event.kind,'decision_required');await f.runner.close();await new Promise(r=>setTimeout(r,10));const state=await f.store.load(event.run_id);assert.equal(state.lifecycle,'paused');assert.equal(state.pending.id,event.payload.id);assert.ok(state.events.some(e=>e.event_id===event.event_id));assert.ok(state.events.some(e=>e.kind==='paused'));assert.notEqual(f.adapter.errors.length,0);});
 
 test('artifact reference checks real image bytes, hash, MIME and size',async t=>{const f=await fixture(t);const bytes=Buffer.from([137,80,78,71,13,10,26,10,1]);await writeFile(join(f.root,'image.png'),bytes);const artifact={id:'image.png',mime:'image/png',path:'image.png',sha256:createHash('sha256').update(bytes).digest('hex'),size:bytes.length,purpose:'acceptance image'};assert.deepEqual((await verifyArtifact(f.root,artifact)).bytes,bytes);const bad={...artifact,sha256:'0'.repeat(64)};await assert.rejects(verifyArtifact(f.root,bad),/integrity check failed/);});
