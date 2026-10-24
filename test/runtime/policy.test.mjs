@@ -58,6 +58,11 @@ test('v1 run state migrates to v2 and keeps a private backup', async t => {
   assert.equal(saved.schema, 2);
   assert.equal(saved.phase, 'idle');
   assert.equal(saved.state_version, 1);
+  setPhase(loaded, 'running');
+  await store.save(loaded);
+  const transitions = await store.readTransitions(created.run_id);
+  assert.equal(transitions.at(-1).from, 'idle');
+  assert.equal(transitions.at(-1).to, 'running');
 });
 
 test('structured tool errors keep a stable code and message', () => {

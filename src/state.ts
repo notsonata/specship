@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto';
-import { open, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { appendFile, open, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { checkpoint, type WorkspaceCheckpoint } from './workspace.js';
 import { preparePrivateStorage, privateDirectory } from './private-storage.js';
@@ -7,7 +7,7 @@ import { assertInvariants, legacyPhase, phaseFromLegacy, setPhase, type Phase } 
 
 export interface DecisionCallback { activity_id: string; brief_version: number; fingerprint: string; answer?: { text: string; artifacts: unknown[] } }
 
-export interface RunState { schema: 1 | 2; phase?: Phase; state_version?: number; run_id: string; workspace: string; workspace_checkpoint?:WorkspaceCheckpoint; report_checkpoint?:WorkspaceCheckpoint; accept_checkpoint?:WorkspaceCheckpoint; check_results?: unknown[]; lifecycle: string; writer: boolean; supervisor?: { handle: string; thread?: string; turn?: string; waiting: boolean }; brief?: unknown; brief_version: number; operation_ids: Record<string, unknown>; decision_callbacks?: Record<string, DecisionCallback>; current_operation_id?:string; events: unknown[]; handled_event_ids?: string[]; profile?: unknown; activity_id?: string; activity_kind?: string; pending?: unknown; stop_request?: unknown; report?: unknown; report_id?: string; accepted?: unknown; adapter?: unknown; deadline?: number | null; remaining_ms?: number; cleanup_pending?: boolean; wait_policy?: { last_event_id?: string; no_progress: number; inspect_count: number; inspect_window_start: number }; }
+export interface RunState { schema: 1 | 2; phase?: Phase; last_phase?: Phase; last_transition_hash?: string; state_version?: number; run_id: string; workspace: string; workspace_checkpoint?:WorkspaceCheckpoint; report_checkpoint?:WorkspaceCheckpoint; accept_checkpoint?:WorkspaceCheckpoint; check_results?: unknown[]; lifecycle: string; writer: boolean; supervisor?: { handle: string; thread?: string; turn?: string; waiting: boolean }; brief?: unknown; brief_version: number; operation_ids: Record<string, unknown>; decision_callbacks?: Record<string, DecisionCallback>; current_operation_id?:string; events: unknown[]; handled_event_ids?: string[]; profile?: unknown; activity_id?: string; activity_kind?: string; pending?: unknown; stop_request?: unknown; report?: unknown; report_id?: string; accepted?: unknown; adapter?: unknown; deadline?: number | null; remaining_ms?: number; cleanup_pending?: boolean; wait_policy?: { last_event_id?: string; no_progress: number; inspect_count: number; inspect_window_start: number }; }
 export class Store {
   readonly dir: string;
   private writes=new Map<string,Promise<void>>();
@@ -47,7 +47,7 @@ export class Store {
   async publishInterruptDescriptor(value: unknown): Promise<void> { const temp=join(this.dir,`active-run.${randomUUID()}.tmp`);await writeFile(temp,JSON.stringify(value),{flag:'wx',mode:0o600});await rename(temp,join(this.dir,'active-run.json')); }
   async removeInterruptDescriptor(runId:string):Promise<void>{const path=join(this.dir,'active-run.json');try{const value=JSON.parse(await readFile(path,'utf8'));if(value.run_id===runId){const {unlink}=await import('node:fs/promises');await unlink(path);}}catch(e:any){if(e.code!=='ENOENT')throw e;}}
   runDir(id: string): string { if (!/^[a-zA-Z0-9_-]{1,100}$/.test(id)) throw new Error('Invalid run ID'); return join(this.dir, 'runs', id); }
-  async create(): Promise<RunState> { const state: RunState = { schema: 2, phase: 'idle', state_version: 0, run_id: randomUUID(), workspace: this.workspace, lifecycle: 'idle', writer: false, brief_version: 0, operation_ids: {}, events: [] }; await this.save(state); return state; }
+  async create(): Promise<RunState> { const state: RunState = { schema: 2, phase: 'idle', last_phase: 'idle', state_version: 0, run_id: randomUUID(), workspace: this.workspace, lifecycle: 'idle', writer: false, brief_version: 0, operation_ids: {}, events: [] }; await this.save(state); return state; }
   private async renameWithRetry(temp:string,target:string):Promise<void>{
     let delay=20;
     for(let attempt=0;;attempt++){
@@ -68,10 +68,18 @@ export class Store {
     if (legacyPhase(state.phase) !== state.lifecycle) setPhase(state, phaseFromLegacy(state.lifecycle));
     assertInvariants(state);
     state.state_version = (state.state_version ?? 0) + 1;
-    const snapshot = JSON.stringify(state);
     const dir = this.runDir(state.run_id);
     await this.initialize();
     await privateDirectory(dir);
+    if (!state.last_phase) state.last_phase = state.phase;
+    if (state.last_phase !== state.phase) {
+      const record = { from: state.last_phase, to: state.phase, at: new Date().toISOString(), state_version: state.state_version, prev_hash: state.last_transition_hash ?? null };
+      const hash = createHash('sha256').update(JSON.stringify(record)).digest('hex');
+      await appendFile(join(dir, 'transitions.jsonl'), `${JSON.stringify({ ...record, hash })}\n`, { mode: 0o600 }).catch(() => {});
+      state.last_transition_hash = hash;
+      state.last_phase = state.phase;
+    }
+    const snapshot = JSON.stringify(state);
     const path = join(dir, 'state.json');
     const previous = this.writes.get(path) ?? Promise.resolve();
     const current = previous.catch(() => {}).then(async () => {
@@ -98,9 +106,11 @@ export class Store {
       value.schema=2;value.phase=phaseFromLegacy(value.lifecycle);value.state_version=Number.isInteger(value.state_version)?value.state_version:0;
     }
     if(!value.phase)value.phase=phaseFromLegacy(value.lifecycle);
+    if(!value.last_phase)value.last_phase=value.phase;
     assertInvariants(value as RunState);
     return value as RunState;
   }
+  async readTransitions(id:string,offset=0,limit=100):Promise<unknown[]>{const lines=(await readFile(join(this.runDir(id),'transitions.jsonl'),'utf8').catch((error:any)=>{if(error.code==='ENOENT')return '';throw error;})).trim().split('\n').filter(Boolean);return lines.slice(offset,offset+limit).map(line=>{try{return JSON.parse(line);}catch{return {corrupt:true};}});}
   async findOperation(id:string):Promise<{state:RunState;result:unknown}|undefined>{for(const run of await readdir(join(this.dir,'runs'))){const state=await this.load(run);if(Object.hasOwn(state.operation_ids,id))return {state,result:state.operation_ids[id]};}return undefined;}
   async listRuns(offset=0,limit=20){const ids=await readdir(join(this.dir,'runs'));const rows=[];for(const id of ids){const state=await this.load(id);rows.push({run_id:state.run_id,phase:state.phase,lifecycle:state.lifecycle,activity_id:state.activity_id,brief_version:state.brief_version,writer:state.writer,operation_ids:Object.keys(state.operation_ids),supervisor_handle:state.supervisor?.handle});}return rows.sort((a,b)=>a.run_id.localeCompare(b.run_id)).slice(offset,offset+limit);}
    async emit(state: RunState, kind: string, payload: unknown): Promise<unknown> { state.workspace_checkpoint=await checkpoint(this.workspace);const event = { run_id: state.run_id, activity_id: state.activity_id ?? '', event_id: randomUUID(), brief_version: state.brief_version, profile: (state.profile as { name?: string } | undefined)?.name ?? '', supervisor_handle: state.supervisor?.handle ?? '', ...(state.report_id?{report_id:state.report_id}:{}), kind, payload }; state.events.push(event); await this.save(state); this.notify(state.run_id); return event; }

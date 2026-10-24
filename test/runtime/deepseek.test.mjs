@@ -120,6 +120,23 @@ test('DeepSeek ACP snapshot and resume reconnect the exact persisted session', a
   assert.equal(await restored.close(resumed.session), true);
 });
 
+test('DeepSeek writes a prompt journal and restores a completed operation', async t => {
+  const f = await fixture(t);
+  await f.adapter.submit(f.session, 'journal-operation', 'MODE:complete', []);
+  await waitFor(async () => (await f.adapter.reconcile(f.session, 'journal-operation')) === 'complete');
+  const journalPath = join(f.root, 'deepseek-prompt.json');
+  let journal;
+  await waitFor(async () => { try { journal = JSON.parse(await readFile(journalPath, 'utf8')); return journal.status === 'complete'; } catch { return false; } });
+  assert.equal(journal.operationId, 'journal-operation');
+  const snapshot = await f.adapter.snapshot(f.session);
+  assert.equal(await f.adapter.close(f.session), true);
+  const restored = new DeepSeekAdapter(2_000);
+  t.after(async () => { await restored.close(restored.session).catch(() => {}); });
+  const resumed = await restored.restore(snapshot, { ...callback, descriptorPath: f.descriptor });
+  assert.equal((await restored.reconcileOperation(resumed.session, 'journal-operation')).status, 'complete');
+  assert.equal(await restored.close(resumed.session), true);
+});
+
 test('DeepSeek recovery refuses to take over a saved process that is still alive', async t => {
   const f = await fixture(t);
   const snapshot = await f.adapter.snapshot(f.session);

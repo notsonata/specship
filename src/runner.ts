@@ -524,7 +524,7 @@ export class Runner {
   }
   async noteInspection(runId:string|undefined,purpose:string|undefined,section:string):Promise<void>{
     if(!runId)return;
-    if(section==='logs'&&!purpose)throw new SpecshipError('INSPECT_PURPOSE_REQUIRED','Inspecting logs requires purpose=review or purpose=recovery');
+    if((section==='logs'||section==='transitions')&&!purpose)throw new SpecshipError('INSPECT_PURPOSE_REQUIRED','Inspecting logs or transitions requires purpose=review or purpose=recovery');
     if(purpose&&!['review','recovery','decision'].includes(purpose))throw new SpecshipError('INSPECT_PURPOSE_REQUIRED','Inspection purpose must be review, recovery, or decision');
     const state=await this.store.load(runId);
     const policy=state.wait_policy??={no_progress:0,inspect_count:0,inspect_window_start:0};

@@ -208,6 +208,51 @@ Use your local executable paths; on macOS, the shell example is `/bin/sh`. The s
 
 Existing numeric limits remain active until you remove them or set them to `null`. To switch an existing project to unlimited work, edit that field, rerun setup without `--max-dispatch-seconds` (keeping your existing profile/options), merge its new MCP timeout, and reload the connection. Active or recovered assignments retain their saved deadline or no-limit setting. For a configured cap, setup uses the cap plus delivery margin for Codex's tool timeout, up to the same transport backstop.
 
+### Code-enforced acceptance checks
+
+A brief can name checks that the runner executes itself after Ship reports. Add them to `.specship/config.json`; do not let Ship or Spec author arbitrary commands:
+
+```json
+{
+  "checks": {
+    "test": {
+      "command": "npm test",
+      "cwd": ".",
+      "timeout_ms": 120000,
+      "expected_exit": 0
+    }
+  }
+}
+```
+
+Then include optional structured acceptance data in the brief:
+
+```json
+{
+  "acceptance": ["pagination keeps existing filters working"],
+  "acceptance_criteria": [
+    { "id": "A1", "text": "filters still apply" },
+    { "id": "A2", "text": "invalid page returns 400" }
+  ],
+  "required_checks": ["test"]
+}
+```
+
+Ship returns `acceptance_results` keyed by criterion ID. The runner runs the configured checks in the workspace, stores their exit status and bounded output hashes, and includes them in the `implementation_ready` event. `specship_accept` fails if a required check did not pass, a criterion has no evidence, or the workspace drifted after the report/checkpoint. Existing string-only briefs still work without these fields. Check commands are trusted user configuration and can modify the workspace; the runner records the post-check checkpoint for acceptance.
+
+### Wait and inspection policy
+
+These are runner rules, not prompt suggestions:
+
+- A wait that repeats the same `last_event_id` without a new event is rejected as `WAIT_WITHOUT_PROGRESS` after the retry budget; the tool returns a structured error envelope.
+- A second concurrent blocking wait is rejected.
+- `specship_inspect` is rate-limited per run. Inspecting `logs` requires `purpose: "review"` or `"recovery"`.
+- A sleeping or polling loop in the host is not a substitute for a pending supervisor wait.
+
+Tool failures return a structured body with `error.code`, `error.message`, and `error.retryable`. Stop on non-retryable policy errors instead of retrying the same call.
+
+Run states are written as schema 2. A schema-1 run is migrated in memory and a private `state.v1.backup.json` is written before its first v2 save. A private `transitions.jsonl` records phase changes for audit; use `specship_inspect` with `section: "transitions"` and a review/recovery purpose. Do not edit or delete run state to work around a policy error.
+
 Restart the MCP connection after changing configuration. Existing runs keep their saved profile. Specship doesn't silently upgrade the model or fall back to another one. OpenCode and DeepSeek Harness are selectable Ship harnesses; additional adapters must pass the same contract before they are selectable.
 
 ## Use DeepSeek Harness for Ship
@@ -258,7 +303,7 @@ Use the provider/model IDs advertised by your DSH session. `deepseek-account/dee
 
 The DeepSeek MCP bridge also applies a 60-second timeout to one tool call. A Spec decision can take longer, so this adapter exposes only `report_result` to Ship (the runner's callback bridge omits `ask_spec` for this harness). For a consequential decision, Ship submits a `needs_decision` implementation report; Spec answers it, and the runner resumes the same DSH session with the answer. The tested decision path returned `decision_required` and then a fresh `implementation_ready` report after the reply. The tradeoff is an explicit turn boundary instead of an in-turn wait. A native DSH callback plugin capable of longer calls is future work; until then, do not describe DeepSeek Ship as having the same unlimited decision wait as OpenCode.
 
-Crash recovery uses ACP `session/resume` against the persisted DSH session and the same working directory. The tested path covers starting, selecting a model, closing, resuming a session without replaying a prompt, and a report-based decision continuation; a real DSH probe confirmed the native approval request shape, and the adapter's rejection path is covered by the fake ACP tests. If the original DSH process is still alive, recovery refuses to take over its session. If an interrupted prompt's outcome cannot be reconciled, the runner reports a concrete `execution_failed` event and stops instead of guessing or replaying the prompt.
+Crash recovery uses ACP `session/resume` against the persisted DSH session and the same working directory. The adapter also writes a private per-run `deepseek-prompt.json` journal (`submitted`, `complete`, or `failed`). A resumed session with a `submitted` prompt that has no completion record is treated as ambiguous and is not replayed; a completed operation can be reconciled. The tested path covers starting, selecting a model, closing, resuming a session without replaying a prompt, and a report-based decision continuation; a real DSH probe confirmed the native approval request shape, and the adapter's rejection path is covered by the fake ACP tests. If the original DSH process is still alive, recovery refuses to take over its session. If an interrupted prompt's outcome cannot be reconciled, the runner reports a concrete `execution_failed` event and stops instead of guessing or replaying the prompt.
 
 ## Stops, reconnects, and images
 

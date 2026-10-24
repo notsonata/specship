@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { access, readFile } from 'node:fs/promises';
+import { access, readFile, rename, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { createInterface, type Interface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { isDeepSeekProfile, type DeepSeekProfile, type Profile } from '../contracts.js';
@@ -60,6 +61,7 @@ export class DeepSeekAdapter implements ShipAdapter {
   private sessionClosed = false;
   private shipPrompt = '';
   private submitted = 0;
+  private journalPath = '';
 
   constructor(private stopTimeoutMs = 120_000) {}
 
@@ -91,6 +93,18 @@ export class DeepSeekAdapter implements ShipAdapter {
       return { command: profile.executable, args: ['--expose-internals', cli, '--profile', profileName], env: { ELECTRON_RUN_AS_NODE: '1' } };
     }
     return { command: profile.executable, args: ['--profile', profileName], env: {} };
+  }
+
+  private async writeJournal(value: Record<string, unknown>): Promise<void> {
+    if (!this.journalPath) return;
+    const temp = `${this.journalPath}.${randomUUID()}.tmp`;
+    await writeFile(temp, JSON.stringify(value), { mode: 0o600, flag: 'wx' });
+    await rename(temp, this.journalPath);
+  }
+  private async readJournal(): Promise<any> {
+    if (!this.journalPath) return undefined;
+    try { return JSON.parse(await readFile(this.journalPath, 'utf8')); }
+    catch (error: any) { if (error.code === 'ENOENT') return undefined; throw error; }
   }
 
   private async loadShipPrompt(): Promise<string> {
@@ -211,6 +225,7 @@ export class DeepSeekAdapter implements ShipAdapter {
     if (this.child) throw new Error('This DeepSeek adapter already owns an active process');
     this.workspace = workspace;
     this.callback = callback;
+    this.journalPath = callback.descriptorPath ? join(dirname(callback.descriptorPath), 'deepseek-prompt.json') : '';
     this.shipPrompt = await this.loadShipPrompt();
     try {
       await this.boot(profile, kind);
@@ -251,6 +266,7 @@ export class DeepSeekAdapter implements ShipAdapter {
     const text = `${this.submitted === 1 ? `${this.shipPrompt}\n\n` : ''}${prompt}\n[specship-operation:${operationId}]`;
     const id = this.nextId++;
     const state: PromptState = { operationId, settled: false, settleWaiters: [] };
+    await this.writeJournal({ session, operationId, status: 'submitted', at: new Date().toISOString() }).catch(() => {});
     const response = this.register(id, 0);
     this.prompts.set(operationId, state);
     this.currentPrompt = state;
@@ -266,11 +282,13 @@ export class DeepSeekAdapter implements ShipAdapter {
       this.currentPrompt = undefined;
       for (const wake of state.settleWaiters.splice(0)) wake();
       this.push(session, { type: 'idle', session });
+      void this.writeJournal({ session, operationId, status: 'complete', stopReason: state.stopReason ?? null, at: new Date().toISOString() }).catch(() => {});
     }).catch(error => {
       state.settled = true;
       state.error = error instanceof Error ? error : new Error(String(error));
       this.currentPrompt = undefined;
       for (const wake of state.settleWaiters.splice(0)) wake();
+      void this.writeJournal({ session, operationId, status: 'failed', message: state.error.message, at: new Date().toISOString() }).catch(() => {});
       if (!this.closing) this.push(session, { type: 'error', session, data: { error: { name: 'DeepSeekPromptError', message: state.error.message } } });
     });
     return { messageId: operationId };
@@ -322,10 +340,16 @@ export class DeepSeekAdapter implements ShipAdapter {
     this.workspace = value.workspace;
     this.callback = callback;
     this.mediaTypes = [];
+    this.journalPath = callback.descriptorPath ? join(dirname(callback.descriptorPath), 'deepseek-prompt.json') : '';
+    const journal = await this.readJournal();
+    if (journal?.session === value.session && journal.status === 'submitted') throw new Error('DeepSeek prompt outcome is ambiguous: the saved activity was submitted but never recorded as complete; it will not be replayed');
     try {
       await this.boot(value.profile, value.kind === 'explore' || value.kind === 'correct' ? value.kind : 'implement');
       await this.resumeSession(value.session);
       this.version = typeof value.version === 'string' ? value.version : this.version;
+      if (journal?.session === value.session && journal.status === 'complete' && typeof journal.operationId === 'string') {
+        this.prompts.set(journal.operationId, { operationId: journal.operationId, settled: true, stopReason: typeof journal.stopReason === 'string' ? journal.stopReason : undefined, settleWaiters: [] });
+      }
       return { session: this.session, version: this.version };
     } catch (error) {
       const child = this.ownedChild();
@@ -498,8 +522,12 @@ export class DeepSeekAdapter implements ShipAdapter {
       const timer = setTimeout(() => finish(false), Math.min(this.stopTimeoutMs, 10_000));
       child.once('exit', onExit);
       child.once('error', onError);
-      try { if (!child.kill()) finish(false); }
-      catch { finish(false); }
+      try {
+        if (process.platform === 'win32' && child.pid) {
+          const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+          killer.once('error', () => { try { child.kill(); } catch { finish(false); } });
+        } else if (!child.kill()) finish(false);
+      } catch { finish(false); }
     });
   }
 
@@ -522,6 +550,7 @@ export class DeepSeekAdapter implements ShipAdapter {
     this.diagnostics = '';
     this.submitted = 0;
     this.shipPrompt = '';
+    this.journalPath = '';
     this.closing = false;
   }
 }

@@ -83,7 +83,7 @@ test('adapter snapshot restores the exact authenticated local session without an
 });
 
 test('closing an owned server confirms real process exit, including signal termination',async t=>{
-  const f=await fakeOpenCode(t);f.sessions.get(f.session).status='idle';
+  const f=await fakeOpenCode(t);f.sessions.get(f.session).status='idle';f.adapter.stopTimeoutMs=2_000;
   const child=spawn(process.execPath,['-e',"process.send('ready');setInterval(()=>{},1000)"],{stdio:['ignore','ignore','ignore','ipc'],windowsHide:true});
   t.after(()=>{if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');});
   await once(child,'message');f.adapter.child=child;
