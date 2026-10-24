@@ -65,6 +65,11 @@ export class DeepSeekAdapter implements ShipAdapter {
 
   constructor(private stopTimeoutMs = 120_000) {}
 
+  async capabilities(profile: Profile): Promise<{ media: string[]; resume: boolean; inTurnDecision: boolean; maxToolCallMs: number; sandbox: 'workspace-write'|'danger-full-access' }> {
+    if (!isDeepSeekProfile(profile)) throw new Error('DeepSeek adapter requires a deepseek Ship profile');
+    return { media: [], resume: true, inTurnDecision: false, maxToolCallMs: 60_000, sandbox: profile.options.sandbox ?? 'workspace-write' };
+  }
+
   async validate(profile: Profile, media: string[]): Promise<void> {
     if (!isDeepSeekProfile(profile)) throw new Error('DeepSeek adapter requires a deepseek Ship profile');
     const unsupported = Object.keys(profile.options ?? {}).filter(key => !DEEPSEEK_OPTIONS.has(key));

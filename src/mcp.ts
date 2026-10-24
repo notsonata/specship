@@ -73,7 +73,7 @@ export async function serveSpec(runner: Runner, store: Store): Promise<void> {
     else if (args.section === 'artifacts') value = (state.brief as any)?.artifacts ?? [];
     else if (args.section === 'profiles') value = state.profile;
     else if (args.section === 'logs') value = state.events;
-    else if (args.section === 'transitions') value = await store.readTransitions(args.run_id, 0, offset + limit);
+    else if (args.section === 'transitions') return output(await store.transitionAudit(args.run_id, offset, limit));
     else value = { run_id: state.run_id, phase: state.phase, lifecycle: state.lifecycle, activity_id: state.activity_id, activity_kind: state.activity_kind, brief_version: state.brief_version, report_id: state.report_id, writer: state.writer, operations: Object.keys(state.operation_ids), pending_kind: (state.pending as any)?.kind, event_ids: state.events.map((event: any) => event.event_id) };
     const array = Array.isArray(value) ? value.slice(offset, offset + limit) : value;
     return output(array);

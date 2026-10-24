@@ -33,12 +33,12 @@ const TARGET: Partial<Record<Action, Phase>> = {
 };
 
 const ALLOWED: Record<Phase, Set<Action>> = {
-  idle: new Set(['dispatch', 'wait', 'inspect']),
+  idle: new Set(['dispatch', 'recover', 'wait', 'inspect']),
   dispatching: new Set(['dispatch', 'wait', 'inspect', 'cancel']),
-  running: new Set(['dispatch', 'ship_question', 'ship_permission', 'ship_report_ready', 'ship_report_needs', 'deadline', 'interrupt', 'pause', 'cancel', 'wait', 'inspect']),
+  running: new Set(['dispatch', 'ship_question', 'ship_permission', 'ship_report_ready', 'ship_report_needs', 'deadline', 'interrupt', 'pause', 'cancel', 'recover', 'wait', 'inspect']),
   awaiting_decision: new Set(['reply', 'cancel', 'deadline', 'interrupt', 'wait', 'inspect']),
   awaiting_user: new Set(['reply', 'cancel', 'deadline', 'interrupt', 'wait', 'inspect']),
-  awaiting_review: new Set(['accept', 'dispatch', 'pause', 'cancel', 'interrupt', 'wait', 'inspect']),
+  awaiting_review: new Set(['accept', 'dispatch', 'pause', 'cancel', 'interrupt', 'recover', 'wait', 'inspect']),
   paused: new Set(['resume', 'recover', 'cancel', 'dispatch', 'wait', 'inspect']),
   limit_reached: new Set(['recover', 'cancel', 'wait', 'inspect']),
   cancelled: new Set(['wait', 'inspect']),

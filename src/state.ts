@@ -7,7 +7,7 @@ import { assertInvariants, legacyPhase, phaseFromLegacy, setPhase, type Phase } 
 
 export interface DecisionCallback { activity_id: string; brief_version: number; fingerprint: string; answer?: { text: string; artifacts: unknown[] } }
 
-export interface RunState { schema: 1 | 2; phase?: Phase; last_phase?: Phase; last_transition_hash?: string; state_version?: number; run_id: string; workspace: string; workspace_checkpoint?:WorkspaceCheckpoint; report_checkpoint?:WorkspaceCheckpoint; accept_checkpoint?:WorkspaceCheckpoint; check_results?: unknown[]; lifecycle: string; writer: boolean; supervisor?: { handle: string; thread?: string; turn?: string; waiting: boolean }; brief?: unknown; brief_version: number; operation_ids: Record<string, unknown>; decision_callbacks?: Record<string, DecisionCallback>; current_operation_id?:string; events: unknown[]; handled_event_ids?: string[]; profile?: unknown; activity_id?: string; activity_kind?: string; pending?: unknown; stop_request?: unknown; report?: unknown; report_id?: string; accepted?: unknown; adapter?: unknown; deadline?: number | null; remaining_ms?: number; cleanup_pending?: boolean; wait_policy?: { last_event_id?: string; no_progress: number; inspect_count: number; inspect_window_start: number }; }
+export interface RunState { schema: 1 | 2; phase?: Phase; last_phase?: Phase; last_transition_hash?: string; state_version?: number; run_id: string; workspace: string; workspace_checkpoint?:WorkspaceCheckpoint; report_checkpoint?:WorkspaceCheckpoint; accept_checkpoint?:WorkspaceCheckpoint; check_results?: unknown[]; lifecycle: string; writer: boolean; supervisor?: { handle: string; thread?: string; turn?: string; waiting: boolean }; brief?: unknown; brief_version: number; operation_ids: Record<string, unknown>; decision_callbacks?: Record<string, DecisionCallback>; current_operation_id?:string; events: unknown[]; handled_event_ids?: string[]; profile?: unknown; activity_id?: string; activity_kind?: string; pending?: unknown; stop_request?: unknown; report?: unknown; report_id?: string; accepted?: unknown; adapter?: unknown; capabilities?: unknown; deadline?: number | null; remaining_ms?: number; cleanup_pending?: boolean; wait_policy?: { last_event_id?: string; no_progress: number; inspect_count: number; inspect_window_start: number }; }
 export class Store {
   readonly dir: string;
   private writes=new Map<string,Promise<void>>();
@@ -111,6 +111,18 @@ export class Store {
     return value as RunState;
   }
   async readTransitions(id:string,offset=0,limit=100):Promise<unknown[]>{const lines=(await readFile(join(this.runDir(id),'transitions.jsonl'),'utf8').catch((error:any)=>{if(error.code==='ENOENT')return '';throw error;})).trim().split('\n').filter(Boolean);return lines.slice(offset,offset+limit).map(line=>{try{return JSON.parse(line);}catch{return {corrupt:true};}});}
+  async transitionAudit(id:string,offset=0,limit=100):Promise<{ok:boolean;count:number;last_hash:string|null;error?:string;records:unknown[]}>{
+    const lines=(await readFile(join(this.runDir(id),'transitions.jsonl'),'utf8').catch((error:any)=>{if(error.code==='ENOENT')return '';throw error;})).trim().split('\n').filter(Boolean);
+    let previous:string|null=null;
+    for(const line of lines){
+      let record:any;try{record=JSON.parse(line);}catch{return {ok:false,count:lines.length,last_hash:previous,error:'Unparseable transition record',records:[]};}
+      if(record.prev_hash!==previous)return {ok:false,count:lines.length,last_hash:previous,error:'Transition hash chain is broken',records:[]};
+      const expected=createHash('sha256').update(JSON.stringify({from:record.from,to:record.to,at:record.at,state_version:record.state_version,prev_hash:record.prev_hash??null})).digest('hex');
+      if(record.hash!==expected)return {ok:false,count:lines.length,last_hash:previous,error:'Transition hash does not match its record',records:[]};
+      previous=record.hash;
+    }
+    return {ok:true,count:lines.length,last_hash:previous,records:lines.slice(offset,offset+limit).map(line=>JSON.parse(line))};
+  }
   async findOperation(id:string):Promise<{state:RunState;result:unknown}|undefined>{for(const run of await readdir(join(this.dir,'runs'))){const state=await this.load(run);if(Object.hasOwn(state.operation_ids,id))return {state,result:state.operation_ids[id]};}return undefined;}
   async listRuns(offset=0,limit=20){const ids=await readdir(join(this.dir,'runs'));const rows=[];for(const id of ids){const state=await this.load(id);rows.push({run_id:state.run_id,phase:state.phase,lifecycle:state.lifecycle,activity_id:state.activity_id,brief_version:state.brief_version,writer:state.writer,operation_ids:Object.keys(state.operation_ids),supervisor_handle:state.supervisor?.handle});}return rows.sort((a,b)=>a.run_id.localeCompare(b.run_id)).slice(offset,offset+limit);}
    async emit(state: RunState, kind: string, payload: unknown): Promise<unknown> { state.workspace_checkpoint=await checkpoint(this.workspace);const event = { run_id: state.run_id, activity_id: state.activity_id ?? '', event_id: randomUUID(), brief_version: state.brief_version, profile: (state.profile as { name?: string } | undefined)?.name ?? '', supervisor_handle: state.supervisor?.handle ?? '', ...(state.report_id?{report_id:state.report_id}:{}), kind, payload }; state.events.push(event); await this.save(state); this.notify(state.run_id); return event; }

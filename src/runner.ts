@@ -11,7 +11,7 @@ import type { AdapterEvent, ShipAdapter } from './adapters/types.js';
 import type { RunnerConfig } from './contracts.js';
 import { checkpoint, changedPaths } from './workspace.js';
 import { LONG_TOOL_TIMEOUT_MS } from './timeouts.js';
-import { isTerminal, setPhase, transition } from './policy.js';
+import { authorize, setPhase, transition } from './policy.js';
 import { SpecshipError } from './errors.js';
 
 type ActiveExecution = { hub: CallbackHub; session: string; aborter: AbortController; eventAbort: AbortController; state: RunState; waiting: boolean; timer?: NodeJS.Timeout; stopping?: Promise<boolean>; pump?: Promise<void>; closing?: boolean; disposed?: boolean };
@@ -41,7 +41,7 @@ export class Runner {
        const attached = input.run_id ? this.active.get(input.run_id) : undefined;
         state = attached?.state ?? (input.run_id ? await this.store.load(input.run_id) : await this.store.create());
        if(input.kind==='correct'&&!input.run_id)throw new SpecshipError('INVALID_TRANSITION','A correction requires the exact existing run_id');
-       if(isTerminal(state.phase ?? 'failed'))throw new SpecshipError('TERMINAL_RUN',`Run is terminal (${state.phase ?? state.lifecycle}); dispatch a new run instead`);
+       authorize(state,'dispatch');
        if(attached){if(input.supervisor_handle!==state.supervisor?.handle)throw new Error('Exact supervisor_handle is required');this.bindCaller(state,meta);}
        if(state.operation_ids[input.operation_id]){const recorded=state.operation_ids[input.operation_id] as any;if(recorded.fingerprint&&recorded.fingerprint!==fingerprint)throw new Error('Operation ID was reused with different dispatch input');const event=recorded.result??recorded;if(event.event_id)return event as MaterialEvent;throw new Error('Operation was already prepared/submitted; reconcile its exact saved adapter message instead of replaying');}
       if(state.writer)throw new Error('A Ship writer is already active');if(input.expected_brief_version!==undefined&&input.expected_brief_version!==state.brief_version)throw new Error('Stale brief version');
@@ -53,7 +53,10 @@ export class Runner {
          const criteria=parsed.acceptance_criteria??[];if(new Set(criteria.map(item=>item.id)).size!==criteria.length)throw new SpecshipError('CAPABILITY_UNSUPPORTED','Acceptance criterion IDs must be unique');
        }
        else nextBrief={artifacts:await materializeArtifacts(this.store.workspace,input.artifacts??[])};
-       const selected=resolveProfile(this.config,input.ship_profile);const media=await this.media(this.store.workspace,(nextBrief as any)?.artifacts??[]);await this.adapter.validate(selected.profile,media.map(m=>m.mime));
+       const selected=resolveProfile(this.config,input.ship_profile);const media=await this.media(this.store.workspace,(nextBrief as any)?.artifacts??[]);
+       const capabilities=await this.adapter.capabilities?.(selected.profile).catch(()=>undefined);
+       if(capabilities){const accepted=new Set(capabilities.media);for(const item of media)if(!accepted.has(item.mime))throw new SpecshipError('CAPABILITY_UNSUPPORTED',`Harness '${selected.profile.harness}' does not accept ${item.mime}`);state.capabilities=capabilities;}
+       await this.adapter.validate(selected.profile,media.map(m=>m.mime));
        if (attached && JSON.stringify(state.profile) !== JSON.stringify({ name: selected.name, ...selected.profile })) throw new Error('A correction must keep the active run profile unchanged');
        await this.store.claimWriter(state.run_id);
        started=true;state.brief=nextBrief;if(input.kind!=='explore')state.brief_version++;
@@ -407,6 +410,7 @@ export class Runner {
     const fingerprint=JSON.stringify({request_id:input.request_id,answer:input.answer,brief:input.brief,defer:input.defer_to_user});
     const previous=state.operation_ids[input.operation_id] as any;
     if(previous){if(previous.fingerprint!==fingerprint)throw new Error('Operation ID was reused with different reply input');if(previous.result?.event_id)return previous.result as MaterialEvent;throw new Error('Identical reply operation is already pending');}
+    authorize(state,'reply');
     if (state.brief_version !== input.expected_brief_version) throw new Error('Stale reply');
     const question = state.pending as any;
     if (question?.id !== input.request_id) throw new Error('Stale request ID');
@@ -462,6 +466,7 @@ export class Runner {
   async wait(runId:string,supervisorHandle?:string,meta?:{thread?:string;turn?:string},signal?:AbortSignal,lastEventId?:string,recover=false):Promise<MaterialEvent>{
     const active=this.active.get(runId);if(!active){if(recover)return this.recover(runId,supervisorHandle??'',meta,signal);throw new Error('Run is not attached in this process; explicit recovery is required');}
     await this.assertSupervisor(runId,supervisorHandle,meta);const state=active.state;
+    authorize(state,'wait');
     const unresolved=state.pending as any;
     const relevant=state.events.filter((event:any)=>event.activity_id===state.activity_id&&!(state.handled_event_ids??[]).includes(event.event_id)&&(
       ['question','recovery_review'].includes(unresolved?.kind??'')&&event.kind==='decision_required'&&event.payload?.id===unresolved.id||
@@ -504,12 +509,19 @@ export class Runner {
       const command=process.platform==='win32'?process.env.ComSpec??'cmd.exe':'/bin/sh';
       const args=process.platform==='win32'?['/d','/s','/c',check.command]:['-lc',check.command];
       let child;
-      try{child=spawn(command,args,{cwd,env:{...process.env},stdio:['ignore','pipe','pipe'],windowsHide:true});}
+      try{child=spawn(command,args,{cwd,env:{...process.env},stdio:['ignore','pipe','pipe'],windowsHide:true,detached:process.platform!=='win32'});}
       catch(error){resolvePromise({id,status:'error',message:String(error),duration_ms:Date.now()-started});return;}
       child.stdout?.on('data',chunk=>{stdoutHash.update(chunk);if(stdout.length<limit)stdout+=chunk.toString().slice(0,limit-stdout.length);});
       child.stderr?.on('data',chunk=>{stderrHash.update(chunk);if(stderr.length<limit)stderr+=chunk.toString().slice(0,limit-stderr.length);});
       const timeout=Math.max(1,Math.min(check.timeout_ms??120_000,600_000));
-      const timer=setTimeout(()=>{timedOut=true;try{child!.kill();}catch{}},timeout);
+      const timer=setTimeout(()=>{
+        timedOut=true;
+        try{
+          if(process.platform==='win32'&&child!.pid)spawn('taskkill',['/PID',String(child!.pid),'/T','/F'],{stdio:'ignore',windowsHide:true});
+          else if(child!.pid)process.kill(-child!.pid,'SIGTERM');
+          else child!.kill();
+        }catch{try{child!.kill();}catch{}}
+      },timeout);
       child.once('error',error=>{clearTimeout(timer);resolvePromise({id,status:'error',message:String(error),duration_ms:Date.now()-started});});
       child.once('close',(code,signal)=>{clearTimeout(timer);const expected=check.expected_exit??0;const passed=!timedOut&&code===expected;resolvePromise({id,status:passed?'passed':'failed',exit_code:code,signal,expected_exit:expected,timed_out:timedOut,duration_ms:Date.now()-started,stdout_sha256:stdoutHash.digest('hex'),stderr_sha256:stderrHash.digest('hex'),output_summary:`${stdout}\n${stderr}`.trim().slice(-2_000)});});
     });
@@ -527,6 +539,7 @@ export class Runner {
     if((section==='logs'||section==='transitions')&&!purpose)throw new SpecshipError('INSPECT_PURPOSE_REQUIRED','Inspecting logs or transitions requires purpose=review or purpose=recovery');
     if(purpose&&!['review','recovery','decision'].includes(purpose))throw new SpecshipError('INSPECT_PURPOSE_REQUIRED','Inspection purpose must be review, recovery, or decision');
     const state=await this.store.load(runId);
+    authorize(state,'inspect');
     const policy=state.wait_policy??={no_progress:0,inspect_count:0,inspect_window_start:0};
     const now=Date.now();
     if(!policy.inspect_window_start||now-policy.inspect_window_start>=60_000){policy.inspect_window_start=now;policy.inspect_count=0;}
@@ -536,6 +549,7 @@ export class Runner {
   }
   async accept(runId:string,activityId:string,reportId:string,briefVersion:number,evidence:string):Promise<void>{
     const active=this.active.get(runId);const state=active?.state??await this.store.load(runId);
+    authorize(state,'accept');
     if(state.lifecycle!=='awaiting_review'||state.writer||state.pending&&['question','permission','deferred','recovery_review'].includes((state.pending as any).kind)||state.activity_id!==activityId||state.report_id!==reportId||state.brief_version!==briefVersion||!state.report||!evidence.trim())throw new Error('Acceptance is stale, blocked, or has no independent review evidence');
     if(evidence.length>4_000)throw new SpecshipError('ACCEPTANCE_EVIDENCE_INCOMPLETE','Acceptance evidence must be at most 4000 characters');
     const brief=state.brief as Brief|undefined;const report=state.report as any;
@@ -562,6 +576,7 @@ export class Runner {
     if(signal?.aborted)throw new Error('Control request was cancelled before applying the operation');
     const active = this.active.get(input.run_id);
     const state = active?.state ?? await this.store.load(input.run_id);
+    authorize(state,input.action);
     const fingerprint=JSON.stringify({action:input.action,reason:input.reason});const old=state.operation_ids[input.operation_id] as any;
     if(old){if(old.fingerprint!==fingerprint)throw new Error('Operation ID was reused with different control input');return old.result??old;}
     if (state.supervisor?.handle !== input.supervisor_handle) throw new Error('Supervisor handle mismatch');

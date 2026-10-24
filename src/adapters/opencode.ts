@@ -42,6 +42,11 @@ export class OpenCodeAdapter implements ShipAdapter {
 
   constructor(private executable = process.env.OPENCODE_BIN ?? 'opencode', private stopTimeoutMs = 120_000, private testEndpoint?: OpenCodeTestEndpoint) {}
 
+  async capabilities(profile: Profile): Promise<{ media: string[]; resume: boolean; inTurnDecision: boolean }> {
+    if (!isOpenCodeProfile(profile)) throw new Error('OpenCode adapter requires an OpenCode profile');
+    return { media: ['image/png', 'image/jpeg'], resume: true, inTurnDecision: true };
+  }
+
   async validate(profile: Profile, media: string[]): Promise<void> {
     if (!isOpenCodeProfile(profile)) throw new Error('OpenCode adapter requires an OpenCode profile');
     if (Object.keys(profile.options).some(key => !['variant','shell'].includes(key))) throw new Error('OpenCode profile has unsupported options');

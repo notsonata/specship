@@ -25,6 +25,12 @@ export class HarnessRegistry implements ShipAdapter {
     return adapter;
   }
 
+  async capabilities(profile: Profile) {
+    const adapter = this.adapterFor(profile);
+    if (!adapter.capabilities) throw new Error(`Harness '${adapter.name}' does not declare capabilities`);
+    return await adapter.capabilities(profile);
+  }
+
   async validate(profile: Profile, media: string[]): Promise<void> { await this.adapterFor(profile).validate(profile, media); }
 
   async start(workspace: string, profile: Profile, kind: 'explore' | 'implement' | 'correct', callback: { url: string; capability: string; descriptorPath?: string; timeoutMs?: number }): Promise<{ session: string; version: string }> {

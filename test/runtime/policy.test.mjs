@@ -63,6 +63,10 @@ test('v1 run state migrates to v2 and keeps a private backup', async t => {
   const transitions = await store.readTransitions(created.run_id);
   assert.equal(transitions.at(-1).from, 'idle');
   assert.equal(transitions.at(-1).to, 'running');
+  assert.equal((await store.transitionAudit(created.run_id)).ok, true);
+  const journalPath = join(runDir, 'transitions.jsonl');
+  await writeFile(journalPath, (await readFile(journalPath, 'utf8')).replace('"to":"running"', '"to":"paused"'));
+  assert.equal((await store.transitionAudit(created.run_id)).ok, false);
 });
 
 test('structured tool errors keep a stable code and message', () => {
