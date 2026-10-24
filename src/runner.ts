@@ -22,6 +22,9 @@ export class Runner {
   private expiring = new Map<string, Promise<void>>();
   constructor(private store: Store, private config: RunnerConfig, private adapter: ShipAdapter) {}
   profiles(){return this.config.ship;}
+  private log(state:RunState,event:string,data:Record<string,unknown>={}):void{
+    void this.store.appendLog(state.run_id,'runner',`${JSON.stringify({at:new Date().toISOString(),event,...data})}\n`).catch(()=>{});
+  }
   private async git(cwd:string,args:string[],input?:string):Promise<string>{
     return await new Promise<string>((resolvePromise,rejectPromise)=>{
       const child=spawn('git',args,{cwd,env:{...process.env},stdio:['pipe','pipe','pipe'],windowsHide:true});
@@ -109,6 +112,7 @@ export class Runner {
         state.current_operation_id=input.operation_id;
         state.workspace_checkpoint=await checkpoint(this.shipRoot(state));
        await this.store.save(state);
+       this.log(state,'dispatch_start',{kind:input.kind,profile:selected.name,isolation:state.isolation??'shared'});
        let session: string;
        let native: { session: string; version: string };
        let eventAbort: AbortController;
@@ -150,9 +154,11 @@ export class Runner {
          if(activeController.timer)clearTimeout(activeController.timer);
          await this.disposeActive(state.run_id,true);
        }
+       this.log(state,'event',{kind:event.kind,event_id:event.event_id});
        returned=event;
        return event;
     } catch (error) {
+      if (state) this.log(state,'dispatch_error',{message:String(error)});
       if (state && started) {
         const active = this.active.get(state.run_id);
         if (previousReview && !submitAttempted) {
@@ -207,6 +213,7 @@ export class Runner {
       if(!closed){active.closing=false;return false;}
     }
     active.disposed=true;
+    this.log(active.state,'disposed',{close_adapter:closeAdapter});
     this.active.delete(runId);
     return true;
   }

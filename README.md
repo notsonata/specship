@@ -266,7 +266,7 @@ These are runner rules, not prompt suggestions:
 
 - A wait that repeats the same `last_event_id` without a new event is rejected as `WAIT_WITHOUT_PROGRESS` after the retry budget; the tool returns a structured error envelope.
 - A second concurrent blocking wait is rejected.
-- `specship_inspect` is rate-limited per run. Inspecting `logs` requires `purpose: "review"` or `"recovery"`.
+- `specship_inspect` is rate-limited per run. Inspecting `logs` requires `purpose: "review"` or `"recovery"`; it returns the event history plus bounded per-run `logs/` files such as `runner.log` and `deepseek.log`.
 - A sleeping or polling loop in the host is not a substitute for a pending supervisor wait.
 
 Tool failures return a structured body with `error.code`, `error.message`, and `error.retryable`. Stop on non-retryable policy errors instead of retrying the same call.

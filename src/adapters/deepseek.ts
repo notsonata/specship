@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { access, readFile, rename, writeFile } from 'node:fs/promises';
+import { access, appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createInterface, type Interface } from 'node:readline';
@@ -62,6 +62,7 @@ export class DeepSeekAdapter implements ShipAdapter {
   private shipPrompt = '';
   private submitted = 0;
   private journalPath = '';
+  private logPath = '';
 
   constructor(private stopTimeoutMs = 120_000) {}
 
@@ -100,6 +101,11 @@ export class DeepSeekAdapter implements ShipAdapter {
     return { command: profile.executable, args: ['--profile', profileName], env: {} };
   }
 
+  private log(text: string): void {
+    if (!this.logPath) return;
+    const value = String(text).slice(0, 64_000);
+    void mkdir(dirname(this.logPath), { recursive: true }).then(() => appendFile(this.logPath, value, { mode: 0o600 })).catch(() => {});
+  }
   private async writeJournal(value: Record<string, unknown>): Promise<void> {
     if (!this.journalPath) return;
     const temp = `${this.journalPath}.${randomUUID()}.tmp`;
@@ -137,7 +143,7 @@ export class DeepSeekAdapter implements ShipAdapter {
     child.once('error', error => { if (this.child !== child) return; this.spawnFailure = error instanceof Error ? error : new Error(String(error)); this.failAll(this.spawnFailure); });
     child.once('exit', (code, signal) => { if (this.child === child) this.handleExit(code, signal); });
     child.stdin?.on('error', error => { if (this.child === child) this.failAll(error instanceof Error ? error : new Error(String(error))); });
-    child.stderr?.on('data', chunk => { if (this.child === child) this.diagnostics = (this.diagnostics + chunk.toString()).slice(-8_000); });
+    child.stderr?.on('data', chunk => { if (this.child === child) { this.diagnostics = (this.diagnostics + chunk.toString()).slice(-8_000); this.log(chunk.toString()); } });
     if (!child.stdout) throw new Error('DeepSeek ACP stdout is unavailable');
     this.lines = createInterface({ input: child.stdout });
     this.lines.on('line', line => this.handleLine(line));
@@ -231,6 +237,7 @@ export class DeepSeekAdapter implements ShipAdapter {
     this.workspace = workspace;
     this.callback = callback;
     this.journalPath = callback.descriptorPath ? join(dirname(callback.descriptorPath), 'deepseek-prompt.json') : '';
+    this.logPath = callback.descriptorPath ? join(dirname(callback.descriptorPath), 'logs', 'deepseek.log') : '';
     this.shipPrompt = await this.loadShipPrompt();
     try {
       await this.boot(profile, kind);
@@ -346,6 +353,7 @@ export class DeepSeekAdapter implements ShipAdapter {
     this.callback = callback;
     this.mediaTypes = [];
     this.journalPath = callback.descriptorPath ? join(dirname(callback.descriptorPath), 'deepseek-prompt.json') : '';
+    this.logPath = callback.descriptorPath ? join(dirname(callback.descriptorPath), 'logs', 'deepseek.log') : '';
     const journal = await this.readJournal();
     if (journal?.session === value.session && journal.status === 'submitted') throw new Error('DeepSeek prompt outcome is ambiguous: the saved activity was submitted but never recorded as complete; it will not be replayed');
     try {
@@ -419,7 +427,7 @@ export class DeepSeekAdapter implements ShipAdapter {
     if (!line.trim()) return;
     let message: JsonRpcMessage;
     try { message = JSON.parse(line); }
-    catch { this.diagnostics = (this.diagnostics + `\nstdout: ${line}`).slice(-8_000); return; }
+    catch { this.diagnostics = (this.diagnostics + `\nstdout: ${line}`).slice(-8_000); this.log(`stdout: ${line}\n`); return; }
     if (message.id !== undefined && message.method === undefined) {
       const id = Number(message.id);
       const pending = this.pending.get(id);
@@ -556,6 +564,7 @@ export class DeepSeekAdapter implements ShipAdapter {
     this.submitted = 0;
     this.shipPrompt = '';
     this.journalPath = '';
+    this.logPath = '';
     this.closing = false;
   }
 }

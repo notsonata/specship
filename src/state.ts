@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFile, open, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { appendFile, open, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { checkpoint, type WorkspaceCheckpoint } from './workspace.js';
 import { preparePrivateStorage, privateDirectory } from './private-storage.js';
@@ -111,6 +111,18 @@ export class Store {
     return value as RunState;
   }
   async readTransitions(id:string,offset=0,limit=100):Promise<unknown[]>{const lines=(await readFile(join(this.runDir(id),'transitions.jsonl'),'utf8').catch((error:any)=>{if(error.code==='ENOENT')return '';throw error;})).trim().split('\n').filter(Boolean);return lines.slice(offset,offset+limit).map(line=>{try{return JSON.parse(line);}catch{return {corrupt:true};}});}
+  async appendLog(id:string,name:string,text:string):Promise<void>{
+    if(!/^[a-z0-9-]{1,32}$/.test(name))throw new Error('Invalid log name');
+    const dir=join(this.runDir(id),'logs');await privateDirectory(dir);
+    await appendFile(join(dir,`${name}.log`),String(text).slice(0,64_000),{mode:0o600});
+  }
+  async logFiles(id:string):Promise<Array<{name:string;size:number;updated_at:string}>>{
+    const dir=join(this.runDir(id),'logs');
+    const names=await readdir(dir).catch((error:any)=>{if(error.code==='ENOENT')return [] as string[];throw error;});
+    const files=[];
+    for(const name of names){if(!name.endsWith('.log'))continue;const info=await stat(join(dir,name));files.push({name,size:info.size,updated_at:info.mtime.toISOString()});}
+    return files.sort((a,b)=>a.name.localeCompare(b.name));
+  }
   async transitionAudit(id:string,offset=0,limit=100):Promise<{ok:boolean;count:number;last_hash:string|null;error?:string;records:unknown[]}>{
     const lines=(await readFile(join(this.runDir(id),'transitions.jsonl'),'utf8').catch((error:any)=>{if(error.code==='ENOENT')return '';throw error;})).trim().split('\n').filter(Boolean);
     let previous:string|null=null;
