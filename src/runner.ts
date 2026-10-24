@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
-import { relative, resolve, sep } from 'node:path';
+import { tmpdir } from 'node:os';
+import { join, relative, resolve, sep } from 'node:path';
 import { Brief, type ActivityKind, type CheckDefinition, type MaterialEvent, type Profile, type Report } from './contracts.js';
 import { resolveProfile } from './config.js';
 import { materializeArtifacts, MAX_ARTIFACT_BYTES, verifyArtifact } from './artifacts.js';
@@ -21,6 +22,36 @@ export class Runner {
   private expiring = new Map<string, Promise<void>>();
   constructor(private store: Store, private config: RunnerConfig, private adapter: ShipAdapter) {}
   profiles(){return this.config.ship;}
+  private async git(cwd:string,args:string[],input?:string):Promise<string>{
+    return await new Promise<string>((resolvePromise,rejectPromise)=>{
+      const child=spawn('git',args,{cwd,env:{...process.env},stdio:['pipe','pipe','pipe'],windowsHide:true});
+      let stdout='',stderr='';const limit=8_000_000;
+      child.stdout.on('data',chunk=>{if(stdout.length<limit)stdout+=chunk.toString().slice(0,limit-stdout.length);});
+      child.stderr.on('data',chunk=>{if(stderr.length<limit)stderr+=chunk.toString().slice(0,limit-stderr.length);});
+      child.once('error',rejectPromise);
+      child.once('close',code=>{if(code===0)resolvePromise(stdout);else rejectPromise(new SpecshipError('CAPABILITY_UNSUPPORTED',`git ${args.join(' ')} failed: ${stderr.slice(-2_000)}`));});
+      child.stdin.end(input??'');
+    });
+  }
+  private shipRoot(state:RunState):string{return state.checkpoint_root??this.store.workspace;}
+  private async createWorktree(runId:string):Promise<string>{
+    await this.git(this.store.workspace,['rev-parse','--is-inside-work-tree']);
+    const path=join(tmpdir(),`specship-worktree-${runId}`);
+    await this.git(this.store.workspace,['worktree','add','--detach',path,'HEAD']);
+    return await realpath(path);
+  }
+  private async removeWorktree(state:RunState):Promise<void>{
+    if(!state.ship_workspace)return;
+    await this.git(this.store.workspace,['worktree','remove','--force',state.ship_workspace]).catch(()=>{});
+    state.ship_workspace=undefined;state.checkpoint_root=undefined;
+  }
+  private async applyWorktree(state:RunState):Promise<void>{
+    const worktree=state.ship_workspace;if(!worktree)return;
+    await this.git(worktree,['add','-A']);
+    const patch=await this.git(worktree,['diff','--cached','--binary','HEAD']);
+    if(patch.trim())await this.git(this.store.workspace,['apply','--binary','--whitespace=nowarn','-'],patch);
+    await this.removeWorktree(state);
+  }
   private async media(workspace: string, refs: unknown[] = []) {
     const verified = [];
     for (const ref of refs) {
@@ -42,6 +73,12 @@ export class Runner {
         state = attached?.state ?? (input.run_id ? await this.store.load(input.run_id) : await this.store.create());
        if(input.kind==='correct'&&!input.run_id)throw new SpecshipError('INVALID_TRANSITION','A correction requires the exact existing run_id');
        authorize(state,'dispatch');
+       const requestedIsolation=this.config.ship.isolation??'shared';
+       if(state.ship_workspace){state.isolation='worktree';state.checkpoint_root=state.ship_workspace;}
+       else if(input.kind!=='explore'&&requestedIsolation==='worktree'){
+         try{const worktree=await this.createWorktree(state.run_id);state.isolation='worktree';state.ship_workspace=worktree;state.checkpoint_root=worktree;}
+         catch(error){if(state.ship_workspace)await this.removeWorktree(state).catch(()=>{});throw error;}
+       }else{state.isolation='shared';state.checkpoint_root=this.store.workspace;}
        if(attached){if(input.supervisor_handle!==state.supervisor?.handle)throw new Error('Exact supervisor_handle is required');this.bindCaller(state,meta);}
        if(state.operation_ids[input.operation_id]){const recorded=state.operation_ids[input.operation_id] as any;if(recorded.fingerprint&&recorded.fingerprint!==fingerprint)throw new Error('Operation ID was reused with different dispatch input');const event=recorded.result??recorded;if(event.event_id)return event as MaterialEvent;throw new Error('Operation was already prepared/submitted; reconcile its exact saved adapter message instead of replaying');}
       if(state.writer)throw new Error('A Ship writer is already active');if(input.expected_brief_version!==undefined&&input.expected_brief_version!==state.brief_version)throw new Error('Stale brief version');
@@ -70,7 +107,7 @@ export class Runner {
        state.pending = undefined;
         state.operation_ids[input.operation_id]={fingerprint,status:'prepared',activity_id:state.activity_id,operation_id:input.operation_id};
         state.current_operation_id=input.operation_id;
-        state.workspace_checkpoint=await checkpoint(this.store.workspace);
+        state.workspace_checkpoint=await checkpoint(this.shipRoot(state));
        await this.store.save(state);
        let session: string;
        let native: { session: string; version: string };
@@ -82,7 +119,7 @@ export class Runner {
          let sessionId = '';
           hub = new CallbackHub(this.store,state,async()=>{if(!sessionId)return false;const stopped=await this.adapter.abort(sessionId);const controller=this.active.get(state!.run_id);if(stopped&&controller?.timer){clearTimeout(controller.timer);controller.timer=undefined;}return stopped;},this.config.limits.delivery_margin_seconds*1000);
          await hub.start();
-          native = await this.adapter.start(this.store.workspace,selected.profile,input.kind,{url:hub.url,capability:hub.token,descriptorPath:this.store.callbackDescriptorPath(state.run_id),timeoutMs:LONG_TOOL_TIMEOUT_MS});
+          native = await this.adapter.start(this.shipRoot(state),selected.profile,input.kind,{url:hub.url,capability:hub.token,descriptorPath:this.store.callbackDescriptorPath(state.run_id),timeoutMs:LONG_TOOL_TIMEOUT_MS});
           session = native.session; sessionId = session;
           state.adapter={adapter:this.adapter.name,session:native.session,version:native.version,message_id:null,operation_id:input.operation_id};
          eventAbort = new AbortController();
@@ -242,7 +279,7 @@ export class Runner {
       const recorded=state.profile as any;
       if(!savedProfile||savedProfile.model!==recorded?.model||savedProfile.harness!==recorded?.harness||JSON.stringify(savedProfile.options)!==JSON.stringify(recorded?.options)||savedProfile.executable!==recorded?.executable)throw new Error('Saved private adapter profile does not match the authoritative run profile');
       await this.media(this.store.workspace,(state.brief as any)?.artifacts??[]);
-      if((snapshot as any)?.workspace&&(snapshot as any).workspace!==this.store.workspace)throw new Error('Saved adapter workspace does not match this run');
+      if((snapshot as any)?.workspace&&(snapshot as any).workspace!==(state.ship_workspace??this.store.workspace))throw new Error('Saved adapter workspace does not match this run');
       try{await this.store.reclaimWriter(runId);}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT'&&!state.writer)await this.store.claimWriter(runId);else throw error;}
       hub=new CallbackHub(this.store,state,async()=>{if(!restored)return false;return this.adapter.abort(restored.session);},this.config.limits.delivery_margin_seconds*1000);
       await hub.start();
@@ -255,7 +292,7 @@ export class Runner {
       if(state.lifecycle!=='awaiting_review')this.scheduleDeadline(runId);
       const pump=this.consume(restored.session,eventAbort.signal,hub,state).catch(error=>{void this.store.emit(state!,'execution_failed',{message:String(error)});});void pump;
       state.adapter={...(state.adapter as any),session:restored.session,version:restored.version};
-      const currentCheckpoint=await checkpoint(this.store.workspace);
+      const currentCheckpoint=await checkpoint(this.shipRoot(state));
       const drift=state.workspace_checkpoint&&currentCheckpoint?changedPaths(state.workspace_checkpoint,currentCheckpoint):[];
       if(drift.length){
         if(!await this.stop(active)){await this.store.emit(state,'execution_failed',{reason:'Workspace changed and stop is unconfirmed; writer retained'});return state.events.at(-1) as MaterialEvent;}
@@ -369,7 +406,7 @@ export class Runner {
         const quiescence = await this.adapter.reconcile(session, messageId);
         if (quiescence === 'complete') {
           state.writer = false;
-          const currentCheckpoint = await checkpoint(this.store.workspace);
+          const currentCheckpoint = await checkpoint(this.shipRoot(state));
           const drift = state.report_checkpoint && currentCheckpoint ? changedPaths(state.report_checkpoint, currentCheckpoint) : [];
           if (drift.length) {
             const active = this.active.get(state.run_id);
@@ -391,11 +428,11 @@ export class Runner {
           const results = ('status' in report ? (report as any).acceptance_results : undefined) ?? [];
           const uncovered = criteria.filter(criterion => !results.some((result: any) => result.criterion_id === criterion.id && result.evidence.trim()));
           const checksPassed = checks.every(check => check.status === 'passed');
-          state.accept_checkpoint = await checkpoint(this.store.workspace);
+          state.accept_checkpoint = await checkpoint(this.shipRoot(state));
           setPhase(state, !isExploration && status === 'ready_for_review' ? 'awaiting_review' : !isExploration&&status==='needs_decision'?'awaiting_decision':'idle');
           if (state.lifecycle !== 'awaiting_review') await this.store.releaseWriter(state.run_id);
           const kind = isExploration ? 'exploration_completed' : status === 'ready_for_review' ? 'implementation_ready' : status === 'needs_decision' ? 'decision_required' : 'execution_failed';
-          return await this.store.emit(state, kind, { report, checks, checks_passed: checksPassed, uncovered_criteria: uncovered.map(item => item.id), ...(status==='needs_decision'?{request_id:state.report_id}:{}) }) as MaterialEvent;
+          return await this.store.emit(state, kind, { report, checks, checks_passed: checksPassed, uncovered_criteria: uncovered.map(item => item.id), ...(state.ship_workspace?{worktree:state.ship_workspace}:{}), ...(status==='needs_decision'?{request_id:state.report_id}:{}) }) as MaterialEvent;
         }
       }
       await this.waitForWake(cell,end,signal);
@@ -559,10 +596,11 @@ export class Runner {
     const criteria=brief?.acceptance_criteria??[];const results=report.acceptance_results??[];
     const uncovered=criteria.filter(criterion=>!results.some((result:any)=>result.criterion_id===criterion.id&&result.evidence.trim()));
     if(uncovered.length)throw new SpecshipError('ACCEPTANCE_EVIDENCE_INCOMPLETE',`Acceptance evidence is missing for: ${uncovered.map(item=>item.id).join(', ')}`);
-    const current=await checkpoint(this.store.workspace);
+    const current=await checkpoint(this.shipRoot(state));
     if(state.workspace_checkpoint&&current&&changedPaths(state.workspace_checkpoint,current).length)throw new Error('Workspace changed since this report; review the changes and obtain fresh validation before accepting');
     const acceptedAt=state.accept_checkpoint??state.report_checkpoint;
     if(acceptedAt&&current&&changedPaths(acceptedAt,current).length)throw new Error('Workspace changed after this report; review the changes and obtain fresh validation before accepting');
+    if(state.ship_workspace)await this.applyWorktree(state);
     if(active){
       if(active.timer)clearTimeout(active.timer);
       const stopped=await this.adapter.close?.(active.session);

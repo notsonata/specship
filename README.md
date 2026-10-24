@@ -240,6 +240,26 @@ Then include optional structured acceptance data in the brief:
 
 Ship returns `acceptance_results` keyed by criterion ID. The runner runs the configured checks in the workspace, stores their exit status and bounded output hashes, and includes them in the `implementation_ready` event. `specship_accept` fails if a required check did not pass, a criterion has no evidence, or the workspace drifted after the report/checkpoint. Existing string-only briefs still work without these fields. Check commands are trusted user configuration and can modify the workspace; the runner records the post-check checkpoint for acceptance.
 
+### Optional worktree isolation
+
+A project can keep Ship's edits out of the main working tree until acceptance:
+
+```json
+{
+  "ship": {
+    "default_profile": "workhorse",
+    "isolation": "worktree",
+    "profiles": { "workhorse": { "harness": "opencode", "model": "openai/gpt-6-luna", "options": {} } }
+  }
+}
+```
+
+Setup can write it with `--isolation worktree`.
+
+In worktree mode, the runner creates a detached Git worktree at the repository HEAD for each implementation/correction activity and starts Ship there. The main workspace remains untouched while Ship works. The `implementation_ready` event includes the worktree path; `specship_inspect` with `section: "recovery"` also reports `isolation` and `ship_workspace`, so Spec can inspect the actual diff before accepting. Acceptance runs the configured checks in the worktree, then applies the staged worktree diff to the main workspace with `git apply` and removes the worktree. If the patch conflicts, acceptance fails and the worktree remains for inspection.
+
+Limitations: this mode requires a Git repository with a commit, uses the committed `HEAD` rather than uncommitted main-tree changes, and leaves the worktree in place after cancellation/failure so partial work can be inspected or recovered. It is not an OS sandbox; it is a Git boundary.
+
 ### Wait and inspection policy
 
 These are runner rules, not prompt suggestions:

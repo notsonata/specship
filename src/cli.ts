@@ -38,8 +38,9 @@ async function setup(args: string[]): Promise<void> {
   const harness=options.get('harness') ?? 'opencode';
   const cliOption=options.get('cli');
   const sandbox=options.get('sandbox');
-  if (!profileName || !model || !/^[^/]+\/.+$/.test(model) || !executable || !isAbsolute(executable) || max !== null && (!Number.isSafeInteger(max) || max < 1) || !Number.isSafeInteger(margin) || margin < 1) {
-    throw new Error('setup requires --profile NAME --model provider/model --executable ABSOLUTE_PATH [--harness opencode|deepseek] [--max-dispatch-seconds N] [--delivery-margin-seconds N] [--variant VALUE] [--shell ABSOLUTE_PATH] [--cli ABSOLUTE_PATH] [--sandbox workspace-write|danger-full-access]');
+  const isolation=options.get('isolation');
+  if (!profileName || !model || !/^[^/]+\/.+$/.test(model) || !executable || !isAbsolute(executable) || max !== null && (!Number.isSafeInteger(max) || max < 1) || !Number.isSafeInteger(margin) || margin < 1 || isolation && !['shared','worktree'].includes(isolation)) {
+    throw new Error('setup requires --profile NAME --model provider/model --executable ABSOLUTE_PATH [--harness opencode|deepseek] [--max-dispatch-seconds N] [--delivery-margin-seconds N] [--variant VALUE] [--shell ABSOLUTE_PATH] [--cli ABSOLUTE_PATH] [--sandbox workspace-write|danger-full-access] [--isolation shared|worktree]');
   }
   let entry: any;
   if (harness === 'opencode') {
@@ -62,10 +63,10 @@ async function setup(args: string[]): Promise<void> {
   try {
     config = await readConfig(configPath);
     const selected = config.ship.profiles[profileName];
-    if (!selected || !isDeepStrictEqual(selected, entry) || (config.limits.max_dispatch_seconds ?? null) !== max || config.limits.delivery_margin_seconds !== margin) throw new Error('Existing .specship/config.json is preserved; setup arguments must match its selected profile and limits');
+    if (!selected || !isDeepStrictEqual(selected, entry) || (config.ship.isolation ?? 'shared') !== (isolation ?? 'shared') || (config.limits.max_dispatch_seconds ?? null) !== max || config.limits.delivery_margin_seconds !== margin) throw new Error('Existing .specship/config.json is preserved; setup arguments must match its selected profile, isolation, and limits');
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    config = { ship: { default_profile: profileName, profiles: { [profileName]: entry } }, limits: { max_dispatch_seconds: max, delivery_margin_seconds: margin } };
+    config = { ship: { default_profile: profileName, profiles: { [profileName]: entry }, ...(isolation?{isolation}:{}) }, limits: { max_dispatch_seconds: max, delivery_margin_seconds: margin } };
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
     process.stderr.write(`Created reviewable configuration ${configPath}\n`);
   }

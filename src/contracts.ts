@@ -19,4 +19,4 @@ export type Profile = OpenCodeProfile | DeepSeekProfile;
 export function isOpenCodeProfile(profile: Profile): profile is OpenCodeProfile { return profile.harness === 'opencode'; }
 export function isDeepSeekProfile(profile: Profile): profile is DeepSeekProfile { return profile.harness === 'deepseek'; }
 export interface CheckDefinition { command: string; cwd?: string; timeout_ms?: number; expected_exit?: number }
-export interface RunnerConfig { ship: { default_profile: string; profiles: Record<string, Profile> }; limits: { max_dispatch_seconds?: number | null; delivery_margin_seconds: number }; checks?: Record<string, CheckDefinition> }
+export interface RunnerConfig { ship: { default_profile: string; profiles: Record<string, Profile>; isolation?: 'shared' | 'worktree' }; limits: { max_dispatch_seconds?: number | null; delivery_margin_seconds: number }; checks?: Record<string, CheckDefinition> }

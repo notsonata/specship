@@ -80,7 +80,7 @@ export class CallbackHub {
           if(this.state.report){if(JSON.stringify(this.state.report)!==JSON.stringify(report))throw new Error('A report is already submitted for this activity');await this.store.save(this.state);if(!res.destroyed)res.writeHead(200).end('{}');return;}
           this.state.report = report;
           this.state.report_id = randomUUID();
-          this.state.report_checkpoint = await checkpoint(this.store.workspace);
+          this.state.report_checkpoint = await checkpoint(this.state.checkpoint_root ?? this.store.workspace);
           this.state.pending = { kind: 'report', id: this.state.report_id };
           await this.store.save(this.state);
           this.store.notify(this.state.run_id);

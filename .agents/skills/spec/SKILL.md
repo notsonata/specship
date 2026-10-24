@@ -47,7 +47,7 @@ When a question is outside your authority, defer it to the user through the runn
 
 ## Review enough to decide
 
-Start from the original request and important diffs, not just Ship's report or rewritten brief. Check whether the implementation and tests share an unsupported assumption. For protocol/domain behavior, verify relevant conventions such as time basis, units, encoding, and boundary meaning against independent source evidence. Passing tests that mock the same assumption used in the fix do not establish it.
+Start from the original request and important diffs, not just Ship's report or rewritten brief. When the event or recovery inspection names a `worktree`, inspect the actual diff there before accepting; acceptance applies that worktree patch to the main workspace. Check whether the implementation and tests share an unsupported assumption. For protocol/domain behavior, verify relevant conventions such as time basis, units, encoding, and boundary meaning against independent source evidence. Passing tests that mock the same assumption used in the fix do not establish it.
 
 Choose the smallest independent check that could falsify the risky assumption, then run the relevant existing checks once. Do not duplicate Ship's exploration or generate exhaustive checks of an already-covered formula. Independence is about the oracle and assumptions, not merely rerunning a command or increasing the number of test cases. If a required semantic choice remains unverified, request a focused correction or report the limitation; do not claim the criterion is satisfied.
 
