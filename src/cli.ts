@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 import { resolve, isAbsolute, join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { writeFile, mkdir, readFile } from 'node:fs/promises';
 import { OpenCodeAdapter } from './adapters/opencode.js';
+import { DeepSeekAdapter } from './adapters/deepseek.js';
+import { HarnessRegistry } from './adapters/registry.js';
 import { readConfig } from './config.js';
 import { Store } from './state.js';
 import { Runner } from './runner.js';
@@ -32,9 +35,25 @@ async function setup(args: string[]): Promise<void> {
   const margin = Number(options.get('delivery-margin-seconds') ?? DEFAULT_DELIVERY_MARGIN_SECONDS);
   const variant = options.get('variant');
   const shipShell=options.get('shell');
-  if (!profileName || !model || !/^[^/]+\/.+$/.test(model) || !executable || !isAbsolute(executable) || max !== null && (!Number.isSafeInteger(max) || max < 1) || !Number.isSafeInteger(margin) || margin < 1 || variant && !['low','medium','high'].includes(variant)||shipShell&&!isAbsolute(shipShell)) {
-    throw new Error('setup requires --profile NAME --model provider/model --executable ABSOLUTE_PATH [--max-dispatch-seconds N] [--delivery-margin-seconds N] [--variant low|medium|high] [--shell ABSOLUTE_PATH]');
+  const harness=options.get('harness') ?? 'opencode';
+  const cliOption=options.get('cli');
+  const sandbox=options.get('sandbox');
+  if (!profileName || !model || !/^[^/]+\/.+$/.test(model) || !executable || !isAbsolute(executable) || max !== null && (!Number.isSafeInteger(max) || max < 1) || !Number.isSafeInteger(margin) || margin < 1) {
+    throw new Error('setup requires --profile NAME --model provider/model --executable ABSOLUTE_PATH [--harness opencode|deepseek] [--max-dispatch-seconds N] [--delivery-margin-seconds N] [--variant VALUE] [--shell ABSOLUTE_PATH] [--cli ABSOLUTE_PATH] [--sandbox workspace-write|danger-full-access]');
   }
+  let entry: any;
+  if (harness === 'opencode') {
+    if (variant && !['low','medium','high'].includes(variant)) throw new Error('OpenCode variant must be low, medium, or high');
+    if (shipShell && !isAbsolute(shipShell)) throw new Error('OpenCode shell must be an absolute executable path');
+    if (cliOption || sandbox) throw new Error('--cli and --sandbox apply only to the deepseek harness');
+    entry = { harness: 'opencode', model, executable, options: { ...(variant?{variant}:{}), ...(shipShell?{shell:shipShell}:{}) } };
+  } else if (harness === 'deepseek') {
+    if (variant && !['off','low','high','max'].includes(variant)) throw new Error('DeepSeek reasoning effort must be off, low, high, or max');
+    if (shipShell) throw new Error('--shell is an OpenCode option; DeepSeek ACP uses its own shell tools');
+    if (cliOption && !isAbsolute(cliOption)) throw new Error('DeepSeek CLI must be an absolute path');
+    if (sandbox && !['workspace-write','danger-full-access'].includes(sandbox)) throw new Error('DeepSeek sandbox must be workspace-write or danger-full-access');
+    entry = { harness: 'deepseek', model, executable, options: { ...(variant?{reasoning_effort:variant}:{}), ...(cliOption?{cli:cliOption}:{}), ...(sandbox?{sandbox}:{}) } };
+  } else throw new Error(`Unsupported harness '${harness}'; use opencode or deepseek`);
   const configPath = join(workspace, '.specship', 'config.json');
   await mkdir(workspace, { recursive: true });
   await preparePrivateStorage(workspace);
@@ -43,10 +62,10 @@ async function setup(args: string[]): Promise<void> {
   try {
     config = await readConfig(configPath);
     const selected = config.ship.profiles[profileName];
-    if (!selected || selected.model !== model || selected.executable !== executable || selected.options.variant !== variant || selected.options.shell!==shipShell || (config.limits.max_dispatch_seconds ?? null) !== max || config.limits.delivery_margin_seconds !== margin) throw new Error('Existing .specship/config.json is preserved; setup arguments must match its selected profile and limits');
+    if (!selected || !isDeepStrictEqual(selected, entry) || (config.limits.max_dispatch_seconds ?? null) !== max || config.limits.delivery_margin_seconds !== margin) throw new Error('Existing .specship/config.json is preserved; setup arguments must match its selected profile and limits');
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    config = { ship: { default_profile: profileName, profiles: { [profileName]: { harness: 'opencode', model, executable, options: {...(variant?{variant}:{}),...(shipShell?{shell:shipShell}:{})} } } }, limits: { max_dispatch_seconds: max, delivery_margin_seconds: margin } };
+    config = { ship: { default_profile: profileName, profiles: { [profileName]: entry } }, limits: { max_dispatch_seconds: max, delivery_margin_seconds: margin } };
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
     process.stderr.write(`Created reviewable configuration ${configPath}\n`);
   }
@@ -84,7 +103,7 @@ else if(command==='serve') {
   const workspace = resolve(args[0] ?? process.cwd());
   const store = new Store(workspace); await store.initialize();
   const config = await readConfig(resolve(workspace, '.specship', 'config.json'));
-  const runner = new Runner(store, config, new OpenCodeAdapter());
+  const runner = new Runner(store, config, new HarnessRegistry({ opencode: new OpenCodeAdapter(), deepseek: new DeepSeekAdapter() }));
   process.once('SIGINT', () => { void runner.close(); });
   process.once('SIGTERM', () => { void runner.close(); });
   await serveSpec(runner, store);

@@ -11,5 +11,9 @@ export type Report = z.infer<typeof Report>;
 export type EventKind = 'exploration_completed'|'decision_required'|'user_input_required'|'implementation_ready'|'execution_failed'|'paused'|'cancelled'|'limit_reached';
 export interface MaterialEvent { run_id: string; activity_id: string; event_id: string; brief_version: number; profile: string; supervisor_handle: string; report_id?: string; kind: EventKind; payload: unknown }
 export type ActivityKind = 'explore'|'implement'|'correct';
-export interface Profile { harness: 'opencode'; model: string; executable?: string; options: { variant?: string; [key: string]: unknown } }
+export interface OpenCodeProfile { harness: 'opencode'; model: string; executable?: string; options: { variant?: 'low'|'medium'|'high'; shell?: string } }
+export interface DeepSeekProfile { harness: 'deepseek'; model: string; executable: string; options: { reasoning_effort?: 'off'|'low'|'high'|'max'; profile?: string; cli?: string; sandbox?: 'workspace-write'|'danger-full-access' } }
+export type Profile = OpenCodeProfile | DeepSeekProfile;
+export function isOpenCodeProfile(profile: Profile): profile is OpenCodeProfile { return profile.harness === 'opencode'; }
+export function isDeepSeekProfile(profile: Profile): profile is DeepSeekProfile { return profile.harness === 'deepseek'; }
 export interface RunnerConfig { ship: { default_profile: string; profiles: Record<string, Profile> }; limits: { max_dispatch_seconds?: number | null; delivery_margin_seconds: number } }

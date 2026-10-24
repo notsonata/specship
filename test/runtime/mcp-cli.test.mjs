@@ -73,6 +73,15 @@ test('local runtime registration works and setup preserves existing runs and rec
   const loaded=await new Store(workspace).load(state.run_id);assert.equal(loaded.supervisor.handle,'existing-supervisor');assert.deepEqual(await store.readPrivate(state.run_id,'adapter.json'),{session:'original-session',password:'fixture-secret'});
 });
 
+test('CLI setup configures a DeepSeek ACP profile while keeping the Codex registration unchanged',async t=>{
+  const workspace=await temp(t,'specship-setup-deepseek-');const installed=await installRuntime(workspace);const fakeCli=join(workspace,'dsh-cli.js');await writeFile(fakeCli,'');
+  const args=[cli,'setup','--workspace',workspace,'--harness','deepseek','--profile','dsh','--model','deepseek-account/deepseek-flash','--executable',process.execPath,'--cli',fakeCli,'--variant','high','--sandbox','workspace-write'];
+  const child=spawn(process.execPath,args,{stdio:['ignore','pipe','pipe']});let out='',err='';child.stdout.on('data',x=>out+=x);child.stderr.on('data',x=>err+=x);
+  const code=await new Promise(resolve=>child.on('close',resolve));assert.equal(code,0,err);const result=JSON.parse(out);assert.match(result.codex_toml,/direct_only_tool_namespaces = \["mcp__specship"\]/);
+  const config=JSON.parse(await readFile(join(workspace,'.specship','config.json'),'utf8'));assert.deepEqual(config.ship.profiles.dsh,{harness:'deepseek',model:'deepseek-account/deepseek-flash',executable:process.execPath,options:{reasoning_effort:'high',cli:fakeCli,sandbox:'workspace-write'}});
+  const repeated=spawn(process.execPath,args,{stdio:['ignore','ignore','pipe']});let repeatErr='';repeated.stderr.on('data',x=>repeatErr+=x);assert.equal(await new Promise(resolve=>repeated.on('close',resolve)),0,repeatErr);
+});
+
 test('setup without a built local runtime fails before creating or replacing configuration',async t=>{
   const workspace=await temp(t,'specship-no-runtime-');await mkdir(join(workspace,'.specship','runs','saved'),{recursive:true});const saved=join(workspace,'.specship','runs','saved','state.json');await writeFile(saved,'existing run bytes');
   const setup=await invokeSetup(cli,workspace);assert.notEqual(setup.code,0);assert.match(setup.err,/Install and build Specship in/);assert.equal(await readFile(saved,'utf8'),'existing run bytes');
@@ -95,6 +104,13 @@ test('production callback bridge waits without an assignment deadline and reject
   const expired=await client.callTool({name:'ask_spec',arguments:{...args,request_id:'expired'}});assert.equal(expired.isError,true);assert.match(expired.content[0].text,/deadline has expired/);assert.equal(requests,1);
 });
 
+test('production callback bridge can expose only report_result when a harness caps a tool call',async t=>{
+  const workspace=await temp(t,'specship-report-only-');const descriptor=join(workspace,'callback.json');await writeFile(descriptor,JSON.stringify({url:'http://127.0.0.1:1',capability:'fixture',deadline:null,delivery_margin_ms:120000,callback_timeout_ms:null}));
+  const transport=new StdioClientTransport({command:process.execPath,args:[fileURLToPath(new URL('../../dist/callback-cli.js',import.meta.url))],env:{SPECSHIP_CALLBACK_DESCRIPTOR:descriptor,SPECSHIP_CALLBACK_REPORT_ONLY:'1'}});
+  const client=new Client({name:'report-only-test',version:'1'});await client.connect(transport);t.after(()=>transport.close());
+  const tools=await client.listTools();assert.deepEqual(tools.tools.map(tool=>tool.name),['report_result']);
+});
+
 test('Interrupt command validates native identity and safely no-ops without an active descriptor',async t=>{
   const workspace=await temp(t,'specship-hook-');await mkdir(join(workspace,'.specship'),{recursive:true});let payload;
   const server=(await import('node:http')).createServer(async(req,res)=>{let raw='';for await(const chunk of req)raw+=chunk;payload=JSON.parse(raw);res.writeHead(202).end('{}');});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
@@ -108,6 +124,15 @@ test('production MCP stdio registers six tools and routes exact caller/handle th
   let transport;t.after(async()=>{await transport?.close();});
   const workspace=await temp(t,'specship-mcp-');transport=new StdioClientTransport({command:process.execPath,args:[fileURLToPath(new URL('./mcp-server.mjs',import.meta.url)),workspace]});const client=new Client({name:'runtime-test',version:'1'});await client.connect(transport);
   const tools=await client.listTools();assert.deepEqual(tools.tools.map(x=>x.name).sort(),['specship_accept','specship_control','specship_dispatch','specship_inspect','specship_reply','specship_wait']);
+  for(const name of ['specship_dispatch','specship_reply']){
+    const schema=tools.tools.find(tool=>tool.name===name).inputSchema.properties.brief;
+    assert.equal(schema.type,'object');
+    assert.equal(schema.properties.verified_context.items.type,'string');
+    assert.equal(schema.properties.acceptance.minItems,1);
+  }
+  const malformed=await client.callTool({name:'specship_dispatch',arguments:{workspace,operation_id:'bad-brief',kind:'implement',brief:{...brief,verified_context:[{reference:'file:1',finding:'test'}]}}});
+  assert.equal(malformed.isError,true);assert.match(malformed.content[0].text,/verified_context/);
+  assert.deepEqual(await new Store(workspace).listRuns(0,20),[],'invalid schema must not create orphan runs');
   const unsupported=await client.callTool({name:'specship_dispatch',arguments:{workspace,operation_id:'missing-native-caller',kind:'implement',brief}});assert.equal(unsupported.isError,true);assert.match(unsupported.content[0].text,/native thread\/turn metadata/);
   const meta={threadId:'codex-thread', 'x-codex-turn-metadata':JSON.stringify({turn_id:'codex-turn'})};
   const first=await client.callTool({name:'specship_dispatch',arguments:{workspace,operation_id:'mcp-op',kind:'implement',brief},_meta:meta});const event=JSON.parse(first.content[0].text);assert.equal(event.kind,'decision_required');assert.ok(event.supervisor_handle);

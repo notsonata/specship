@@ -8,7 +8,7 @@ The idea is to spend your strongest model's time on decisions that matter, while
 
 You talk to Spec in the **Codex app or Codex CLI**. Spec launches Ship through **OpenCode** automatically, so you don't have to copy plans and results between chats.
 
-> **Preview:** this version lives on the `redesign` branch. Windows has been tested. macOS setup is included, but live testing on a Mac is still pending. Requires OpenCode **1.18.30 or newer** and Codex **0.162.0-alpha.17.2 or newer**.
+> **Preview:** this version lives on the `redesign` branch. Windows has been tested. macOS setup is included, but live testing on a Mac is still pending. Requires Codex **0.162.0-alpha.17.2 or newer** and OpenCode **1.18.30 or newer**, unless you configure the preview DeepSeek Harness adapter instead.
 
 ## Let your AI agent set it up
 
@@ -72,7 +72,8 @@ You'll need:
 | Codex | `0.162.0-alpha.17.2` or newer, with local skills, MCP tools, and Interrupt hooks. This is the tested Codex runtime/CLI version. |
 | Node.js and npm | Node 22 or newer; Node 24 is the tested version. |
 | Git | For cloning Specship; recommended for the project you're changing too. |
-| OpenCode | **1.18.30 or newer**, authenticated with access to your chosen Ship model. |
+| OpenCode | **1.18.30 or newer**, authenticated with access to your chosen Ship model. Required for the `opencode` harness. |
+| DeepSeek Harness (optional) | `0.2.1-rc.3` tested. The installed desktop app must expose the built-in `acp` profile and its saved account sign-in. No OpenCode install is needed for a DeepSeek-only setup. |
 
 MCP is the connection that lets Codex call the runner. The Interrupt hook lets Codex tell the runner to stop Ship when you interrupt the chat.
 
@@ -199,25 +200,75 @@ Edit `.specship/config.json` in the project you're working on. For example:
 
 Use your local executable paths; on macOS, the shell example is `/bin/sh`. The shell setting is optional. Explicit `cmd.exe` is the tested Windows choice; the PowerShell harness check failed to produce verifiable Node output.
 
-- **`model`** selects Ship's provider and model in OpenCode.
-- **`variant`** selects `low`, `medium`, or `high` reasoning effort, when supported by that model. You can omit it to use the model's default.
+- **`model`** selects Ship's provider and model in the selected harness. OpenCode uses its `provider/model` identifier; DeepSeek uses the exact route its ACP session advertises.
+- **`variant`** is the OpenCode reasoning effort (`low`, `medium`, or `high`) when that model supports it. DeepSeek uses `reasoning_effort` instead. You can omit either setting to use the model's default.
 - **`profiles`** lets you save multiple choices. `default_profile` selects the usual one; you can ask Spec to use another configured profile by name.
 - **`limits.max_dispatch_seconds`** is optional. Omit it or set it to `null` for no assignment deadline. Set a positive number of seconds only when you want a limit. You can omit the whole `limits` object for the defaults.
 - **`limits.delivery_margin_seconds`** defaults to 120 and applies to result delivery when an assignment deadline is configured. It does not create a deadline for unlimited assignments.
 
 Existing numeric limits remain active until you remove them or set them to `null`. To switch an existing project to unlimited work, edit that field, rerun setup without `--max-dispatch-seconds` (keeping your existing profile/options), merge its new MCP timeout, and reload the connection. Active or recovered assignments retain their saved deadline or no-limit setting. For a configured cap, setup uses the cap plus delivery margin for Codex's tool timeout, up to the same transport backstop.
 
-Restart the MCP connection after changing configuration. Existing runs keep their saved profile. Specship doesn't silently upgrade the model or fall back to another one. Additional harnesses are planned; **OpenCode is the only supported Ship harness today**.
+Restart the MCP connection after changing configuration. Existing runs keep their saved profile. Specship doesn't silently upgrade the model or fall back to another one. OpenCode and DeepSeek Harness are selectable Ship harnesses; additional adapters must pass the same contract before they are selectable.
+
+## Use DeepSeek Harness for Ship
+
+Specship includes a preview `deepseek` harness adapter. It launches the installed DeepSeek Harness through its ACP profile, keeps one persistent session per run, and uses the same authenticated loopback callback server as OpenCode. The adapter does not copy provider credentials or modify the DeepSeek Harness installation.
+
+```json
+{
+  "ship": {
+    "default_profile": "dsh",
+    "profiles": {
+      "dsh": {
+        "harness": "deepseek",
+        "model": "deepseek-account/deepseek-flash",
+        "executable": "C:/Users/you/AppData/Local/Programs/DeepSeek Harness/DeepSeek Harness.exe",
+        "options": {
+          "reasoning_effort": "high",
+          "sandbox": "workspace-write"
+        }
+      }
+    }
+  },
+  "limits": {
+    "max_dispatch_seconds": null,
+    "delivery_margin_seconds": 120
+  }
+}
+```
+
+On Windows, `executable` must be the installed `DeepSeek Harness.exe`. The adapter derives the bundled ACP CLI beside it. Do not point it at `dsh.cmd`: a batch-file launcher cannot be spawned safely without a shell. On macOS or Linux, point `executable` at the installed `dsh` launcher instead. If you run DSH from a source checkout, set `options.cli` to the absolute `dsh` CLI entry and `executable` to the Node or Electron executable that runs it.
+
+Setup can create this profile:
+
+```powershell
+node dist/cli.js setup `
+  --workspace ../.. `
+  --harness deepseek `
+  --profile dsh `
+  --model deepseek-account/deepseek-flash `
+  --executable "C:\path\to\DeepSeek Harness.exe" `
+  --variant high `
+  --sandbox workspace-write
+```
+
+Use the provider/model IDs advertised by your DSH session. `deepseek-account/deepseek-flash` and `deepseek-account/deepseek-v4-pro` are the choices shown by the tested saved account; `deepseek-official/deepseek-v4-flash` is the API-route default. `options.reasoning_effort` accepts `off`, `low`, `high`, or `max`. The adapter verifies the exact route before submitting a prompt; it never silently substitutes another model.
+
+**DeepSeek ACP boundaries.** The ACP profile advertises no image input, so a DeepSeek profile rejects image artifacts before starting work. Explore activities run with DSH's `read-only` policy; implementation and correction activities use `options.sandbox` (default `workspace-write`). Approval requests raised outside that sandbox are surfaced to Spec as `user_input_required`; Spec can reject, pause, or cancel but cannot grant them. To allow the operation, cancel the run, change the DSH permission policy yourself, and start a new run.
+
+The DeepSeek MCP bridge also applies a 60-second timeout to one tool call. A Spec decision can take longer, so this adapter exposes only `report_result` to Ship (the runner's callback bridge omits `ask_spec` for this harness). For a consequential decision, Ship submits a `needs_decision` implementation report; Spec answers it, and the runner resumes the same DSH session with the answer. The tested decision path returned `decision_required` and then a fresh `implementation_ready` report after the reply. The tradeoff is an explicit turn boundary instead of an in-turn wait. A native DSH callback plugin capable of longer calls is future work; until then, do not describe DeepSeek Ship as having the same unlimited decision wait as OpenCode.
+
+Crash recovery uses ACP `session/resume` against the persisted DSH session and the same working directory. The tested path covers starting, selecting a model, closing, resuming a session without replaying a prompt, and a report-based decision continuation; a real DSH probe confirmed the native approval request shape, and the adapter's rejection path is covered by the fake ACP tests. If the original DSH process is still alive, recovery refuses to take over its session. If an interrupted prompt's outcome cannot be reconciled, the runner reports a concrete `execution_failed` event and stops instead of guessing or replaying the prompt.
 
 ## Stops, reconnects, and images
 
-**Permissions:** the runner cannot grant new OpenCode permissions through Spec, even if a reply says the user approved. Spec can reject a request, pause, or cancel. To allow an operation, cancel the blocked run, review/change the permissions yourself in OpenCode, then start a new run. Existing OpenCode permissions still apply; Specship is not an OS sandbox.
+**Permissions:** the runner cannot grant new harness permissions through Spec, even if a reply says the user approved. Spec can reject a request, pause, or cancel. To allow an operation, cancel the blocked run, review/change the permissions yourself in OpenCode or DeepSeek Harness, then start a new run. Existing harness permissions still apply; Specship is not an OS sandbox.
 
-**Stopping:** ask Spec to pause or cancel the run. The Interrupt hook is also intended to stop Ship when you interrupt Codex. The runner only confirms a stop after OpenCode confirms it is idle; an uncertain stop keeps the workspace reserved. The actual desktop Stop button with the production hook still needs live verification.
+**Stopping:** ask Spec to pause or cancel the run. The Interrupt hook is also intended to stop Ship when you interrupt Codex. The runner only confirms a stop after the selected harness confirms it is idle; an uncertain stop keeps the workspace reserved. The actual desktop Stop button with the production hook still needs live verification.
 
 **Reconnecting:** saved state lets Spec attempt to reconnect to the same Ship session, without submitting the job again. Ask it to recover the exact interrupted run. Recovery can require a decision if files changed, time expired, or the original session is unavailable. Partial edits are preserved. Don't delete locks or start a competing run to get around a recovery error.
 
-**Images:** Ship can receive PNG and JPEG files from your project, up to 5 MB combined per assignment. Automatic access to images attached in Codex chat is unverified; use a local file path. PDF, audio, and video input aren't supported yet. Image delivery doesn't guarantee that the model reads it correctly, especially for small images.
+**Images:** an OpenCode Ship profile can receive PNG and JPEG files from your project, up to 5 MB combined per assignment. The preview DeepSeek ACP profile advertises no image input and rejects image artifacts before starting work. Automatic access to images attached in Codex chat is unverified; use a local file path. PDF, audio, and video input aren't supported yet. Image delivery doesn't guarantee that the model reads it correctly, especially for small images.
 
 Only one Ship writer can work in a project at a time. Git projects get automatic change checks during review and recovery; other folders still need manual change verification.
 
@@ -235,6 +286,9 @@ Private configuration and run data are restricted to the current user on POSIX (
 | Spec keeps checking progress | Ensure `mcp__specship` is in `direct_only_tool_namespaces` and that the tools are exposed directly. |
 | A wait times out | Merge the current setup output's MCP timeout and reload the connection. A host timeout is separate from an assignment limit; recover the existing run rather than dispatching it again. |
 | OpenCode version or model is rejected | Use OpenCode 1.18.30 or newer and a provider/model and variant available in your authenticated OpenCode setup. |
+| DeepSeek ACP is unavailable | Use an installed DeepSeek Harness version with the built-in `acp` profile, and set `executable` to `DeepSeek Harness.exe` on Windows. `dsh --profile acp --dump-config` should print a composed profile. |
+| DeepSeek model or effort is rejected | Copy the exact provider/model and effort advertised by the DSH session. The adapter lists the available model choices in the error and never substitutes one. |
+| A DeepSeek decision takes a long time | DeepSeek Ship uses `needs_decision` reports because the harness caps one MCP tool call at 60 seconds. Answer the decision event; the runner resumes the same DSH session. |
 | The stop hook doesn't run | Review/trust the current hook through `/hooks`; changed commands need review again. |
 
 ## Development
@@ -244,9 +298,9 @@ npm ci
 npm run check
 ```
 
-The check command typechecks, builds, and runs the automated tests. It doesn't call a paid model. Tests cover runner state, callbacks, recovery, MCP routing, OpenCode protocol handling, and platform-specific hook commands.
+The check command typechecks, builds, and runs the automated tests. It doesn't call a paid model. Tests cover runner state, callbacks, recovery, MCP routing, OpenCode protocol handling, DeepSeek ACP protocol handling through a fake agent, harness routing, and platform-specific hook commands.
 
-GitHub Actions runs these automated checks on Windows and macOS with Node 22 and 24. CI does not launch Codex or OpenCode, authenticate providers, or perform live model tests.
+GitHub Actions runs these automated checks on Windows and macOS with Node 22 and 24. CI does not launch Codex, OpenCode, or DeepSeek Harness, authenticate providers, or perform live model tests.
 
 Opt-in live checks use your normal model allowance:
 
@@ -257,6 +311,53 @@ node scripts/check-runtime.mjs /absolute/path/to/opencode provider/model high
 On Windows, use the full path to `opencode.exe`. Additional scenarios accept `stop`, `permission`, or `permission-bash` as a final argument. The permission scenarios check that model-issued grants are blocked, then cancel the run. Evidence is saved locally under `.specship/compatibility/`.
 
 Windows live checks have covered implementation, callbacks, corrections, acceptance, exploration, stopping, and crash recovery. Direct MCP waits in Codex CLI and the app stayed blocked for 130 seconds without additional model generations. Native macOS process handling, hook delivery, and quiet waits still need live checks on a Mac.
+
+## Benchmark coding quality and usage
+
+The default benchmark compares **raw Codex** with **Specship** on the same frozen SWE-bench cases. Both use the same configured Spec model and effort; Specship additionally uses the configured Ship model. Set `arms` to choose the comparison; `--arm ship` remains available as an optional diagnostic. Quality comes from the official external test harness; model reports do not determine the score. Token usage, estimated API-equivalent cost, actual billing evidence, and subscription-limit changes are separate measurements. No model calls happen without `run --execute`.
+
+Prerequisites: Node 22+ with the built-in `node:sqlite` module available (Node 24 recommended), a built Specship checkout, Docker with Linux AMD64 containers, and Python 3.10+ with `swebench==5.0.2` installed in a separate virtual environment for dataset preflight. The actual grader runs the pinned package inside a Linux container, avoiding Windows newline differences. Only this trusted, model-free grader receives the Docker socket and held-out dataset. The benchmark installs pinned Codex/OpenCode versions inside disposable agent images, using each case's official SWE-bench image as the base. Image downloads/builds can require substantial disk space. Set `auth.codex_file` and `auth.opencode_file` to absolute paths to the respective CLI's saved subscription authentication JSON. Those files are copied only into each applicable temporary container and removed with it; they are never included in image builds or result artifacts. Authentication/refresh support still depends on the pinned CLI and provider.
+
+```sh
+npm run build
+npm run benchmark -- init
+npm run benchmark -- fetch
+npm run benchmark -- doctor
+npm run benchmark -- plan
+```
+
+Edit `.specship/benchmark/config.json` before running. Choose `spec.model` (the Codex model ID), `ship.model` (`provider/model`), and their efforts. Set absolute `docker`/`python` paths if those tools are not on PATH. The default sample is five deterministic SWE-bench Lite cases, one attempt per configuration: 10 attempts total. `cases.lock.json` retains the selected records, observed dataset revision, seed, and content hash. Create another `--home PATH` for a new sample; fetching never overwrites an existing lock.
+
+Authentication defaults to `auth.mode: "subscription"`. Set `auth.codex_file` to a saved ChatGPT login and `auth.opencode_file` to OpenCode's saved OpenAI OAuth login. Preflight rejects API-only credentials. Subscription trials forward no API-key environment variables, strip any image-provided API/token overrides, force Codex's ChatGPT sign-in method, and remove unrelated OpenCode provider credentials before model execution. Missing or expired subscription authentication fails the attempt; there is no API-key fallback. To explicitly run an API-billed comparison instead, set `auth.mode: "api"` and configure `credential_env`. Dollar estimates in subscription runs are API-equivalent comparisons, not subscription charges.
+
+Prices are explicit USD per million tokens in each model's `rates`: `input`, `cached_input`, `cache_write`, and `output`. Record the pricing source/date and tariff (for example, standard short context) alongside the rates. Estimates apply that flat tariff; they do not reconstruct long-context, Fast mode, regional, or tool surcharges from aggregate token totals. Codex input includes cached input; OpenCode reports its input and cache categories separately. Ship rates additionally require `reasoning_is_separate: true` if its `tokens.output` excludes reasoning, or `false` if it already includes it; verify this for the configured provider/harness. Unknown prices/accounting remain `null`. Failed attempts retain their known per-role costs; `known_api_equivalent_usd` is a lower bound when another role's usage is missing, while the complete total remains `null`. OpenCode's own reported cost is retained separately and is not treated as an invoice. No prices are inferred from a model name.
+
+Validate the grader with a reference fix and an unrelated-file change before spending model allowance. The reference must pass and the unrelated change must fail. These commands run tests/build images but make no model calls:
+
+```sh
+npm run benchmark -- controls --case CASE_ID
+npm run benchmark -- build --case CASE_ID
+npm run benchmark -- preflight --case CASE_ID       # verifies image base/tools, no models
+```
+
+Use a case ID from `plan`. Run a small pilot with `--case CASE_ID`; omit it for the complete frozen sample. `--arm codex`, `--arm ship`, or `--arm specship` selects one configuration. Each command creates a new run; it never silently replays a failed attempt.
+
+```sh
+npm run benchmark -- run                           # dry run only
+npm run benchmark -- run --execute --case CASE_ID  # uses model allowance
+npm run benchmark -- grade --run RUN_ID
+npm run benchmark -- report --run RUN_ID
+```
+
+Each case/configuration gets a fresh container. Only its problem statement, model configuration, base commit, and configured authentication are passed in; no host workspace, Docker socket, reference patch, or held-out tests are mounted. Repository history is removed after checking the base commit. Ship configurations refresh the public catalog and validate the exact model/variant through the production adapter before any model prompt is submitted. The real Codex Spec skill supervises the production runner; the controller does not simulate Spec's answers or acceptance. The external wall-clock limit covers the complete attempt and stops the entire container, including Ship. It is not a dollar spending cap. Runs, raw usage evidence, patches, image IDs, version/configuration records, and JSON summaries stay under `.specship/benchmark/`. This measures the CLI workflow, not desktop UI behavior. Containers retain provider network access: public benchmark tasks are not guaranteed unseen, and this is not a network-sealed evaluation.
+
+Missing token evidence or grader results stay unknown. Token summaries retain raw harness categories and add `input_total` including cache plus `output_total` including reasoning, for comparisons across harnesses. Unknown reasoning semantics leave the output total unknown. Failed/ungraded attempts are reported separately; incomplete grading does not produce a complete success rate or cost-per-success score. Specship acceptance followed by external test failure is a false acceptance. Raw turn/message counts are not API request counts; retries and rate-limit waits require separate provider/proxy evidence.
+
+For actual billing, place `billing.json` beside a trial's `result.json`, with `source`, nonnegative `usd`, and optionally a measured `api_requests`. For subscription limits, place `quota.json` there with `source`, `bucket`, `exclusive: true`, and `before`/`after` objects containing `used_percent` and `resets_at`. `report` imports these controller-side records. Quota deltas are percentage points and are only computed for exclusive account usage within an unchanged reset window; no token-to-subscription conversion is invented. Quota and actual billing remain unknown unless you supply evidence. Account-wide usage while other chats are active cannot be attributed to this benchmark.
+
+The automated test suite exercises the benchmark without provider authentication or paid model calls. Live agent integration and each selected image's gold/no-op controls must be checked on your benchmark host before interpreting results.
+
+Ship accounting comes from OpenCode's persisted assistant-message token records, including corrections and additional sessions in that trial. `ship-usage.json` retains only message/session/model identifiers, numeric usage, completion markers, and harness cost; prompts, tool contents, and authentication are excluded. The controller reads the stopped container's database and WAL before deletion, then removes its temporary database copies. Full-conversation export is supplementary and its failure does not discard measured usage. Reports include Ship input, cache reads/writes, output, reasoning, assistant-message count, and API-equivalent cost. Interrupted or missing records leave the complete total unknown; `ship_tokens_observed` and known costs retain measured lower bounds. Unexpected models remain visible in the trial's per-model breakdown, but do not receive the configured model's tariff. Assistant-message counts are not HTTP request counts, and harness costs are not invoices. Historical usage cannot be reconstructed after both the original database and valid exports have been lost.
 
 ## License
 

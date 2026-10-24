@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { resolve } from 'node:path';
 import type { Runner } from './runner.js';
 import type { Store } from './state.js';
+import { ArtifactInput, Brief } from './contracts.js';
 
 const output = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }] });
 function caller(extra: any): { thread?: string; turn?: string } {
@@ -27,7 +28,7 @@ export async function serveSpec(runner: Runner, store: Store): Promise<void> {
     inputSchema: {
       workspace: z.string(), operation_id: z.string().min(1), run_id: z.string().optional(),
       kind: z.enum(['explore', 'implement', 'correct']), ship_profile: z.string().optional(),
-      assignment: z.string().optional(), brief: z.unknown().optional(), artifacts:z.array(z.unknown()).optional(), corrections: z.array(z.string()).optional(),
+      assignment: z.string().optional(), brief: Brief.optional(), artifacts:z.array(ArtifactInput).optional(), corrections: z.array(z.string()).optional(),
       expected_brief_version: z.number().int().optional(), supervisor_handle: z.string().optional(),
     },
   }, async (args, extra) => {
@@ -38,7 +39,7 @@ export async function serveSpec(runner: Runner, store: Store): Promise<void> {
   });
   server.registerTool('specship_reply', {
     description: 'Persist one exact decision answer and block until the next material event. Native permission requests accept reject only; human grants cannot be supplied through this tool.',
-    inputSchema: { run_id: z.string(), request_id: z.string(), operation_id: z.string(), answer: z.string(), expected_brief_version: z.number().int(), supervisor_handle: z.string(), brief: z.unknown().optional(), defer_to_user: z.boolean().optional() },
+    inputSchema: { run_id: z.string(), request_id: z.string(), operation_id: z.string(), answer: z.string(), expected_brief_version: z.number().int(), supervisor_handle: z.string(), brief: Brief.optional(), defer_to_user: z.boolean().optional() },
   }, async (args, extra) => { await owned(runner, args.run_id, args.supervisor_handle, extra); return output(await runner.reply(args as any, caller(extra), extra.signal)); });
   server.registerTool('specship_wait', {
     description: 'Attach to an exact run and block for a material event; never submits work.',
@@ -75,7 +76,7 @@ export async function serveSpec(runner: Runner, store: Store): Promise<void> {
     inputSchema: { run_id: z.string(), operation_id: z.string(), action: z.enum(['pause', 'resume', 'cancel']), reason: z.string(), supervisor_handle: z.string() },
   }, async (args, extra) => { await owned(runner, args.run_id, args.supervisor_handle, extra); return output(await runner.control(args as any, caller(extra), extra.signal)); });
   server.registerTool('specship_accept', {
-    description: 'Record Spec independent acceptance of the current idle implementation report.',
+    description: 'Accept the exact idle report after checking the original requirements, semantic assumptions, and independent validation. Passing implementation-coupled tests alone is insufficient.',
     inputSchema: { run_id: z.string(), activity_id: z.string(), report_id: z.string(), brief_version: z.number().int(), evidence: z.string().min(1), supervisor_handle: z.string() },
   }, async (args, extra) => { await owned(runner, args.run_id, args.supervisor_handle, extra); await runner.accept(args.run_id, args.activity_id, args.report_id, args.brief_version, args.evidence); return output({ accepted: true }); });
   const transport=new StdioServerTransport();

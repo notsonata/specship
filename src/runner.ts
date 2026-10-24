@@ -207,6 +207,16 @@ export class Runner {
         else if(found?.messageId){messageId=found.messageId;(state.adapter as any).message_id=messageId;}
         await this.store.save(state);
       }
+      if(messageId){
+        const native=await this.adapter.reconcile(restored.session,messageId);
+        if(native==='unknown'||(native==='complete'&&!state.report)){
+          const reason=native==='unknown'?'native execution could not be reconciled after restart; the prompt outcome is ambiguous and was not replayed':'native activity completed without a validated report';
+          const stopped=await this.stop(active);
+          if(stopped){state.writer=false;state.lifecycle='paused';await this.store.releaseWriter(runId);await this.store.removeInterruptDescriptor(runId);await this.store.emit(state,'execution_failed',{reason,stop_confirmed:true});}
+          else await this.store.emit(state,'execution_failed',{reason:`${reason}; stop unconfirmed`,stop_confirmed:false});
+          return state.events.at(-1) as MaterialEvent;
+        }
+      }
       if(state.report){
         const status=await this.adapter.reconcile(restored.session,messageId!);
         if(status==='complete'){
