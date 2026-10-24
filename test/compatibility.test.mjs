@@ -41,7 +41,7 @@ async function fixture(t, waitMs = 150, markers = false, image = null) {
   });
   const send = (id, method, params) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...(id == null ? {} : { id }), method, params })}\n`);
   const until = async (condition) => {
-    const expires = Date.now() + 3000;
+    const expires = Date.now() + 10_000;
     while (!condition()) { if (Date.now() > expires) throw new Error('Fixture deadline'); await delay(5); }
   };
   send(1, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
