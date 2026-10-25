@@ -29,7 +29,7 @@ async function owned(runner: Runner, runId: string, handle: string, extra: any):
 export async function serveSpec(runner: Runner, store: Store): Promise<void> {
   const server = new McpServer({ name: 'specship', version: '1.0.0' });
   server.registerTool('specship_dispatch', {
-    description: 'Delegate investigation, coding, and tests to Ship with a compact brief; block until a result or consequential blocker. No polling or parallel supervisor work is needed.',
+    description: 'Delegate investigation, coding, and tests to Ship with a compact brief; block until a result or consequential blocker. Expect minutes while Ship works: this returns as soon as a material event exists, so do not poll, sleep, or narrate progress. No parallel supervisor work is needed.',
     inputSchema: {
       workspace: z.string(), operation_id: z.string().min(1), run_id: z.string().optional(),
       kind: z.enum(['explore', 'implement', 'correct']), ship_profile: z.string().optional(),

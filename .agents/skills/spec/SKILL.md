@@ -21,6 +21,7 @@ Use the directly exposed Specship MCP tools. If they are missing or only availab
 
 - Normal path: specship_dispatch(kind=implement), one focused review when it returns, then specship_accept. No mandatory exploration or evidence-inspection call.
 - Choose one stable operation_id per mutation; retain the returned run/activity/event/report IDs, brief version, and supervisor_handle. Never replay uncertain work under a new ID.
+- Before a blocking call, post one short line naming what Ship is doing and that the chat will look busy until it reports, for example: "Dispatching to Ship: <task>. I'll review when it reports." That line is the user's only signal while the call is open; do not narrate progress after it, and do not apologize for the wait.
 - Dispatch, reply, and wait already block. While pending, do no autonomous model work: no status/log queries, commentary timers, parallel review, file rereads, speculative planning, or sleep-and-check loops. User interruption remains available. The runner owns monitoring, persistence, check execution, and deadlines; there is no default assignment time limit.
 - On reattachment, wait on the exact last_event_id. WAIT_WITHOUT_PROGRESS is a stop condition, not a reason to poll elsewhere. Only a transport failure may warrant one exact-session recovery attempt; stop on nonretryable protocol errors.
 
