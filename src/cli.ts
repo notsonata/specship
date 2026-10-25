@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { resolve, isAbsolute, join } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
-import { writeFile, mkdir, readFile } from 'node:fs/promises';
+import { isDeepStrictEqual, promisify } from 'node:util';
+import { execFile } from 'node:child_process';
+import { writeFile, mkdir, readFile, lstat } from 'node:fs/promises';
 import { OpenCodeAdapter } from './adapters/opencode.js';
 import { DeepSeekAdapter } from './adapters/deepseek.js';
 import { HarnessRegistry } from './adapters/registry.js';
@@ -24,6 +25,34 @@ function flags(args: string[]): Map<string, string> {
   return result;
 }
 const quote = (value: string) => JSON.stringify(value);
+const execute = promisify(execFile);
+
+async function worktrees(args: string[]): Promise<void> {
+  const options = flags(args);
+  const workspace = resolve(options.get('workspace') ?? process.cwd());
+  const prune = options.get('prune') === 'true' || options.get('prune') === '1';
+  const store = new Store(workspace); await store.initialize();
+  const rows = await store.listRuns(0, 1_000);
+  const result: { worktrees: unknown[]; removed: string[] } = { worktrees: [], removed: [] };
+  for (const row of rows) {
+    if (!row.ship_workspace) continue;
+    let exists = true;
+    try { exists = (await lstat(row.ship_workspace)).isDirectory(); } catch { exists = false; }
+    const reclaimable = ['completed', 'cancelled', 'failed'].includes(String(row.phase ?? row.lifecycle));
+    if (prune && exists && reclaimable) {
+      await execute('git', ['-C', workspace, 'worktree', 'remove', '--force', row.ship_workspace], { windowsHide: true }).catch(() => undefined);
+      await execute('git', ['-C', workspace, 'worktree', 'prune'], { windowsHide: true }).catch(() => undefined);
+      const state = await store.load(row.run_id);
+      state.ship_workspace = undefined;
+      state.checkpoint_root = undefined;
+      await store.save(state);
+      result.removed.push(row.ship_workspace);
+    } else {
+      result.worktrees.push({ run_id: row.run_id, phase: row.phase, exists, reclaimable, ship_workspace: row.ship_workspace });
+    }
+  }
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+}
 
 async function setup(args: string[]): Promise<void> {
   const options = flags(args);
@@ -100,6 +129,7 @@ if (command === 'setup') await setup(args);
 else if (command === 'interrupt') {
   const options = flags(args); await interrupt(resolve(options.get('workspace') ?? process.cwd()));
 }
+else if(command==='worktrees') await worktrees(args);
 else if(command==='serve') {
   const workspace = resolve(args[0] ?? process.cwd());
   const store = new Store(workspace); await store.initialize();
@@ -109,4 +139,4 @@ else if(command==='serve') {
   process.once('SIGTERM', () => { void runner.close(); });
   await serveSpec(runner, store);
 }
-else throw new Error(`Unknown command: ${command}. Use setup, serve, or interrupt.`);
+else throw new Error(`Unknown command: ${command}. Use setup, serve, interrupt, or worktrees.`);

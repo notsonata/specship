@@ -83,6 +83,18 @@ test('operation lookup uses and refreshes a durable index', async t => {
   assert.equal(index['indexed-operation'], state.run_id);
 });
 
+test('events are archived for bounded inspection without unbounded state growth', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'specship-events-'));
+  t.after(async () => { await rm(root, { recursive: true, force: true }); });
+  const store = new Store(root); await store.initialize();
+  const state = await store.create();
+  state.activity_id = 'activity';
+  await store.save(state);
+  const event = await store.emit(state, 'paused', { reason: 'test' });
+  const archived = await store.readEvents(state.run_id);
+  assert.equal(archived.at(-1).event_id, event.event_id);
+});
+
 test('structured tool errors keep a stable code and message', () => {
   const result = toToolError(new SpecshipError('WAIT_WITHOUT_PROGRESS', 'no new event', { details: { run_id: 'r' } }));
   assert.equal(result.isError, true);

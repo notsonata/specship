@@ -112,6 +112,10 @@ export class Store {
     return value as RunState;
   }
   async readTransitions(id:string,offset=0,limit=100):Promise<unknown[]>{const lines=(await readFile(join(this.runDir(id),'transitions.jsonl'),'utf8').catch((error:any)=>{if(error.code==='ENOENT')return '';throw error;})).trim().split('\n').filter(Boolean);return lines.slice(offset,offset+limit).map(line=>{try{return JSON.parse(line);}catch{return {corrupt:true};}});}
+  async readEvents(id:string,offset=0,limit=100):Promise<unknown[]>{
+    const lines=(await readFile(join(this.runDir(id),'events.jsonl'),'utf8').catch((error:any)=>{if(error.code==='ENOENT')return '';throw error;})).trim().split('\n').filter(Boolean);
+    return lines.slice(offset,offset+limit).map(line=>{try{return JSON.parse(line);}catch{return {corrupt:true};}});
+  }
   async appendLog(id:string,name:string,text:string):Promise<void>{
     if(!/^[a-z0-9-]{1,32}$/.test(name))throw new Error('Invalid log name');
     const dir=join(this.runDir(id),'logs');await privateDirectory(dir);
@@ -156,6 +160,6 @@ export class Store {
     for(const run of await readdir(join(this.dir,'runs'))){const state=await this.load(run).catch(()=>undefined);if(state&&Object.hasOwn(state.operation_ids,id))return {state,result:state.operation_ids[id]};}
     return undefined;
   }
-  async listRuns(offset=0,limit=20){const ids=await readdir(join(this.dir,'runs'));const rows=[];for(const id of ids){const state=await this.load(id);rows.push({run_id:state.run_id,phase:state.phase,lifecycle:state.lifecycle,activity_id:state.activity_id,brief_version:state.brief_version,writer:state.writer,operation_ids:Object.keys(state.operation_ids),supervisor_handle:state.supervisor?.handle});}return rows.sort((a,b)=>a.run_id.localeCompare(b.run_id)).slice(offset,offset+limit);}
-   async emit(state: RunState, kind: string, payload: unknown): Promise<unknown> { state.workspace_checkpoint=await checkpoint(state.checkpoint_root??this.workspace);const event = { run_id: state.run_id, activity_id: state.activity_id ?? '', event_id: randomUUID(), brief_version: state.brief_version, profile: (state.profile as { name?: string } | undefined)?.name ?? '', supervisor_handle: state.supervisor?.handle ?? '', ...(state.report_id?{report_id:state.report_id}:{}), kind, payload }; state.events.push(event); await this.save(state); this.notify(state.run_id); return event; }
+  async listRuns(offset=0,limit=20){const ids=await readdir(join(this.dir,'runs'));const rows=[];for(const id of ids){const state=await this.load(id);rows.push({run_id:state.run_id,phase:state.phase,lifecycle:state.lifecycle,isolation:state.isolation,ship_workspace:state.ship_workspace,activity_id:state.activity_id,brief_version:state.brief_version,writer:state.writer,operation_ids:Object.keys(state.operation_ids),supervisor_handle:state.supervisor?.handle});}return rows.sort((a,b)=>a.run_id.localeCompare(b.run_id)).slice(offset,offset+limit);}
+   async emit(state: RunState, kind: string, payload: unknown): Promise<unknown> { state.workspace_checkpoint=await checkpoint(state.checkpoint_root??this.workspace);const event = { run_id: state.run_id, activity_id: state.activity_id ?? '', event_id: randomUUID(), brief_version: state.brief_version, profile: (state.profile as { name?: string } | undefined)?.name ?? '', supervisor_handle: state.supervisor?.handle ?? '', ...(state.report_id?{report_id:state.report_id}:{}), kind, payload }; state.events.push(event);if(state.events.length>1_000)state.events=state.events.slice(-1_000);await privateDirectory(this.runDir(state.run_id));await appendFile(join(this.runDir(state.run_id),'events.jsonl'),`${JSON.stringify(event)}\n`,{mode:0o600}).catch(()=>{});await this.save(state);this.notify(state.run_id);return event; }
 }

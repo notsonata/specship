@@ -260,6 +260,15 @@ In worktree mode, the runner creates a detached Git worktree at the repository H
 
 Limitations: this mode requires a Git repository with a commit, uses the committed `HEAD` rather than uncommitted main-tree changes, and leaves the worktree in place after cancellation/failure so partial work can be inspected or recovered. It is not an OS sandbox; it is a Git boundary.
 
+List retained worktrees, or remove worktrees for completed/cancelled/failed runs:
+
+```powershell
+node dist/cli.js worktrees --workspace ../..
+node dist/cli.js worktrees --workspace ../.. --prune true
+```
+
+The command only removes Git worktrees recorded in run state and never deletes the main workspace.
+
 ### Wait and inspection policy
 
 These are runner rules, not prompt suggestions:
