@@ -126,7 +126,19 @@ node dist/cli.js setup \
   --shell /bin/sh
 ```
 
-Setup writes `.specship/config.json` and prints two pieces of Codex configuration. It does **not** edit Codex for you.
+Setup writes `.specship/config.json` and prints two pieces of Codex configuration. It also creates the local credential file inside the project:
+
+```text
+.specship/.env
+.specship/.env.example
+```
+
+> [!IMPORTANT]
+> **DeepSeek Harness:** put `DEEPSEEK_API_KEY` in `.specship/.env`. Setup creates the file automatically and preserves it on re-runs. If `DEEPSEEK_API_KEY` is set in the launching environment, setup writes it in; otherwise fill in the one empty line. Never commit this file; `.specship/` is ignored.
+>
+> The DSH **desktop app** uses its own sign-in under Settings → Models. `.specship/.env` is what the DSH benchmark and API-key route read.
+
+Setup does **not** edit Codex for you.
 
 - No assignment time limit is set by default.
 - Add `--max-dispatch-seconds 3600` only if you want a one-hour limit.

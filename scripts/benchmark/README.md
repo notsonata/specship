@@ -53,9 +53,9 @@ It should contain one line:
 DEEPSEEK_API_KEY=your-deepseek-api-key
 ```
 
-The benchmark loads this file automatically before running. A real environment variable with the same name takes precedence. `.specship/` is gitignored.
+The benchmark loads this file automatically before running. The Specship `setup` command creates the same `.specship/.env` when installing into a project, and preserves it on re-runs. A real environment variable with the same name takes precedence. `.specship/` is gitignored.
 
-`npm run benchmark -- init` also writes `.specship/.env.example`, so a fresh install makes this obvious. Copy it to `.specship/.env` and fill in the key. Keep the file readable only by your account.
+`npm run benchmark -- init` also writes `.specship/.env.example`, so a fresh benchmark checkout makes this obvious. Copy it to `.specship/.env` and fill in the key. Keep the file readable only by your account.
 
 This is the benchmark credential. The DeepSeek Harness **desktop app** stores its own login in DSH settings; the benchmark does not read that.
 

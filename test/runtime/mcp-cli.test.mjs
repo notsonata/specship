@@ -45,6 +45,7 @@ async function invokeSetup(script, workspace, extra=[]) {
 test('CLI setup requires explicit values and emits portable timeout/hook registrations',async t=>{
   const workspace=await temp(t,'specship-setup-');const installed=await installRuntime(workspace);
   const {code,out,err}=await invokeSetup(cli,workspace,['--shell',process.execPath,'--max-dispatch-seconds','90','--delivery-margin-seconds','35']);assert.equal(code,0,err);const result=JSON.parse(out);assert.match(result.codex_toml,/tool_timeout_sec = 125/);assert.match(result.codex_toml,/direct_only_tool_namespaces = \["mcp__specship"\]/);assert.equal(result.hooks_json.hooks.Interrupt[0].hooks[0].timeout,3);assert.equal(result.hooks_json.hooks.Interrupt[0].hooks[0].command,interruptCommand(process.execPath,installed,workspace));assert.match(await readFile(join(workspace,'.specship','config.json'),'utf8'),/"max_dispatch_seconds": 90/);
+  assert.equal(result.environment,join(workspace,'.specship','.env'));assert.equal(result.environment_created,true);assert.match(await readFile(result.environment,'utf8'),/^DEEPSEEK_API_KEY=/m);assert.match(await readFile(join(workspace,'.specship','.env.example'),'utf8'),/^DEEPSEEK_API_KEY=$/m);
   const invalid=spawn(process.execPath,[cli,'setup','--workspace',workspace],{stdio:'ignore'});assert.notEqual(await new Promise(resolve=>invalid.on('close',resolve)),0);
 });
 
@@ -65,8 +66,8 @@ test('local runtime registration works and setup preserves existing runs and rec
   const originals=await Promise.all(paths.map(path=>readFile(path)));
   const installed=await installRuntime(workspace);const setup=await invokeSetup(installed,workspace);assert.equal(setup.code,0,setup.err);
   const output=JSON.parse(setup.out);assert.equal(output.runtime,dirname(dirname(installed)));assert.ok(output.codex_toml.includes(JSON.stringify(installed)));assert.equal(output.hooks_json.hooks.Interrupt[0].hooks[0].command,interruptCommand(process.execPath,installed,workspace));
-  const configPath=join(workspace,'.specship','config.json');const config=await readFile(configPath);
-  const repeated=await invokeSetup(cli,workspace);assert.equal(repeated.code,0,repeated.err);assert.deepEqual(await readFile(configPath),config);
+  const configPath=join(workspace,'.specship','config.json');const config=await readFile(configPath);const envPath=join(workspace,'.specship','.env');const envBefore=await readFile(envPath);
+  const repeated=await invokeSetup(cli,workspace);assert.equal(repeated.code,0,repeated.err);assert.deepEqual(await readFile(configPath),config);assert.deepEqual(await readFile(envPath),envBefore);
   for(let i=0;i<paths.length;i++)assert.deepEqual(await readFile(paths[i]),originals[i]);
   transport=new StdioClientTransport({command:process.execPath,args:[installed,'serve',workspace]});const client=new Client({name:'local-install-test',version:'1'});await client.connect(transport);
   const profiles=await client.callTool({name:'specship_inspect',arguments:{workspace,section:'profiles'}});assert.notEqual(profiles.isError,true);assert.equal(JSON.parse(profiles.content[0].text).default_profile,'chosen');
@@ -78,14 +79,14 @@ test('CLI setup configures a DeepSeek ACP profile while keeping the Codex regist
   const args=[cli,'setup','--workspace',workspace,'--harness','deepseek','--profile','dsh','--model','deepseek-account/deepseek-flash','--executable',process.execPath,'--cli',fakeCli,'--variant','high','--sandbox','workspace-write'];
   const child=spawn(process.execPath,args,{stdio:['ignore','pipe','pipe']});let out='',err='';child.stdout.on('data',x=>out+=x);child.stderr.on('data',x=>err+=x);
   const code=await new Promise(resolve=>child.on('close',resolve));assert.equal(code,0,err);const result=JSON.parse(out);assert.match(result.codex_toml,/direct_only_tool_namespaces = \["mcp__specship"\]/);
-  const config=JSON.parse(await readFile(join(workspace,'.specship','config.json'),'utf8'));assert.deepEqual(config.ship.profiles.dsh,{harness:'deepseek',model:'deepseek-account/deepseek-flash',executable:process.execPath,options:{reasoning_effort:'high',cli:fakeCli,sandbox:'workspace-write'}});
+  const config=JSON.parse(await readFile(join(workspace,'.specship','config.json'),'utf8'));assert.deepEqual(config.ship.profiles.dsh,{harness:'deepseek',model:'deepseek-account/deepseek-flash',executable:process.execPath,options:{reasoning_effort:'high',cli:fakeCli,sandbox:'workspace-write'}});assert.equal((await readFile(join(workspace,'.specship','.env'),'utf8')).includes('DEEPSEEK_API_KEY='),true);
   const repeated=spawn(process.execPath,args,{stdio:['ignore','ignore','pipe']});let repeatErr='';repeated.stderr.on('data',x=>repeatErr+=x);assert.equal(await new Promise(resolve=>repeated.on('close',resolve)),0,repeatErr);
 });
 
 test('setup without a built local runtime fails before creating or replacing configuration',async t=>{
   const workspace=await temp(t,'specship-no-runtime-');await mkdir(join(workspace,'.specship','runs','saved'),{recursive:true});const saved=join(workspace,'.specship','runs','saved','state.json');await writeFile(saved,'existing run bytes');
   const setup=await invokeSetup(cli,workspace);assert.notEqual(setup.code,0);assert.match(setup.err,/Install and build Specship in/);assert.equal(await readFile(saved,'utf8'),'existing run bytes');
-  await assert.rejects(readFile(join(workspace,'.specship','config.json')),{code:'ENOENT'});
+  await assert.rejects(readFile(join(workspace,'.specship','config.json')),{code:'ENOENT'});await assert.rejects(readFile(join(workspace,'.specship','.env')),{code:'ENOENT'});
 });
 
 test('production callback bridge waits without an assignment deadline and rejects an expired finite deadline',async t=>{

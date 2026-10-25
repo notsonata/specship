@@ -99,12 +99,24 @@ async function setup(args: string[]): Promise<void> {
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
     process.stderr.write(`Created reviewable configuration ${configPath}\n`);
   }
+  const envPath = join(workspace, '.specship', '.env');
+  const envExamplePath = join(workspace, '.specship', '.env.example');
+  const deepSeekKey = process.env.DEEPSEEK_API_KEY?.replace(/[\r\n]/g, '').trim();
+  let envCreated = false;
+  try {
+    await writeFile(envPath, `# Specship local credentials. Never commit this file.\n# Required only for the DeepSeek Harness benchmark/API route.\nDEEPSEEK_API_KEY=${deepSeekKey ?? ''}\n`, { flag: 'wx', mode: 0o600 });
+    envCreated = true;
+    process.stderr.write(`Created ${envPath}${deepSeekKey ? ' with DEEPSEEK_API_KEY from the environment' : '; set DEEPSEEK_API_KEY there for the DSH benchmark'}\n`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+  }
+  await writeFile(envExamplePath, '# Copy to .env and fill in the DeepSeek API key. Never commit this file.\nDEEPSEEK_API_KEY=\n', { flag: 'wx', mode: 0o600 }).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; });
   const cliPath = installation.cli;
   const timeout = toolTimeoutSeconds(max, margin);
   const toml = `[features.code_mode]\ndirect_only_tool_namespaces = ["mcp__specship"]\n\n[mcp_servers.specship]\ncommand = ${quote(process.execPath)}\nargs = [${quote(cliPath)}, "serve", ${quote(workspace)}]\ntool_timeout_sec = ${timeout}\n`;
   const command = interruptCommand(process.execPath, cliPath, workspace);
   const hooks = { hooks: { Interrupt: [{ hooks: [{ type: 'command', command, timeout: 3 }] }] } };
-  process.stdout.write(JSON.stringify({ runtime: installation.root, configuration: configPath, codex_toml: toml, hooks_json: hooks, note: 'Review and explicitly trust the Interrupt hook in Codex; setup does not modify Codex settings.' }, null, 2) + '\n');
+  process.stdout.write(JSON.stringify({ runtime: installation.root, configuration: configPath, environment: envPath, environment_example: envExamplePath, environment_created: envCreated, codex_toml: toml, hooks_json: hooks, note: 'Review and explicitly trust the Interrupt hook in Codex; setup does not modify Codex settings. Put DEEPSEEK_API_KEY in .specship/.env for the DSH benchmark; the DSH desktop app uses its own sign-in.' }, null, 2) + '\n');
 }
 
 async function interrupt(workspace: string): Promise<void> {
