@@ -4,6 +4,11 @@
 
 **Specship turns one Codex chat into a two-model coding workflow.** Spec plans and reviews. Ship implements and tests. You stay in the conversation.
 
+<a id="preview-status"></a>
+
+> [!NOTE]
+> **Specship is in preview.** Codex + OpenCode on Windows is the tested path. macOS setup is included but live testing is still pending. DeepSeek Harness is a preview. Install from the `redesign` branch.
+
 [![Status: Preview](https://img.shields.io/badge/status-preview-f59e0b?style=flat-square)](#preview-status)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square)](LICENSE)
 [![Node 22+](https://img.shields.io/badge/node-22%2B-339933?style=flat-square&logo=node.js&logoColor=white)](#requirements)
@@ -66,11 +71,6 @@ flowchart LR
 | **Git** | Required to install; recommended for the project you're changing |
 | **OpenCode** | `1.18.30` or newer, signed in to your chosen Ship model |
 | **DeepSeek Harness** | Optional. `0.2.1-rc.3` tested; installed desktop app with the built-in `acp` profile |
-
-<a id="preview-status"></a>
-
-> [!NOTE]
-> **Preview status.** The tested path is Codex + OpenCode on Windows. macOS setup is included but live testing is still pending. The DeepSeek Harness adapter is a preview. Use the `redesign` branch for the preview installation.
 
 ### 1. Install Specship in your project
 
