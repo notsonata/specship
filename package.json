@@ -13,7 +13,8 @@
     "pretest": "npm run build",
     "test": "node --test test/*.test.mjs test/runtime/*.test.mjs",
     "start": "node dist/cli.js",
-    "check:compatibility": "node scripts/check-compatibility.mjs"
+    "check:compatibility": "node scripts/check-compatibility.mjs",
+    "benchmark": "node scripts/benchmark.mjs"
   },
   "bin": { "specship": "dist/cli.js" },
   "dependencies": {

@@ -17,15 +17,17 @@ const sharedSessions=new Map();
 
 // Deliberately independent of OpenCode: it uses only the adapter contract and a local callback URL.
 class FakeAdapter {
-  name='fake'; next=1; sessions=new Map(); mode='question'; confirmed=true; errors=[]; reconciles=[];
+  name='fake'; next=1; sessions=new Map(); mode='question'; confirmed=true; errors=[]; reconciles=[]; closeCount=0;
   async validate(p,media){ if(p.model!=='openai/gpt-6-luna')throw Error('wrong model');if(media.some(x=>x==='application/pdf'))throw Error('unsupported media'); }
   async start(_workspace,profile,_kind,callback){const id=`fake-${this.next++}`;const session={callback,profile,events:[],waiters:[],report:false,aborted:false,submissions:0};this.sessions.set(id,session);sharedSessions.set(id,session);return {session:id,version:'fake-1'};}
   async subscribe(){}
-  async submit(session,operation,prompt){const s=this.sessions.get(session);s.operation=operation;s.prompt=prompt;s.submissions++;queueMicrotask(async()=>{try{const r=await fetch(`${s.callback.url}/ask_spec`,{method:'POST',headers:{authorization:`Bearer ${s.callback.capability}`,'content-type':'application/json'},body:JSON.stringify({request_id:`q-${operation}`,blocker:'Need the approved detail',evidence:['test evidence'],attempts:['bounded investigation'],decision:'Choose A'})});if(r.ok){await r.json();const reportResult=await fetch(`${s.callback.url}/report_result`,{method:'POST',headers:{authorization:`Bearer ${s.callback.capability}`,'content-type':'application/json'},body:JSON.stringify(report)});if(reportResult.ok)s.report=true;else this.errors.push(await reportResult.text());}else this.errors.push(`ask ${r.status} ${await r.text()}`);}catch(e){this.errors.push(String(e));} });return {messageId:`message-${operation}`};}
+  wake(session){const s=this.sessions.get(session);s.events.push({type:'idle'});for(const wake of s.waiters.splice(0))wake();}
+  async submit(session,operation,prompt){const s=this.sessions.get(session);s.operation=operation;s.prompt=prompt;s.submissions++;queueMicrotask(async()=>{try{const r=await fetch(`${s.callback.url}/ask_spec`,{method:'POST',headers:{authorization:`Bearer ${s.callback.capability}`,'content-type':'application/json'},body:JSON.stringify({request_id:`q-${operation}`,blocker:'Need the approved detail',evidence:['test evidence'],attempts:['bounded investigation'],decision:'Choose A'})});if(r.ok){await r.json();const reportResult=await fetch(`${s.callback.url}/report_result`,{method:'POST',headers:{authorization:`Bearer ${s.callback.capability}`,'content-type':'application/json'},body:JSON.stringify(report)});if(reportResult.ok){s.report=true;this.wake(session);}else this.errors.push(await reportResult.text());}else this.errors.push(`ask ${r.status} ${await r.text()}`);}catch(e){this.errors.push(String(e));} });return {messageId:`message-${operation}`};}
   async *events(session,signal){const s=this.sessions.get(session);while(!signal.aborted){if(s.events.length){yield s.events.shift();continue;}await new Promise(resolve=>{s.waiters.push(resolve);signal.addEventListener('abort',resolve,{once:true});});}}
   async reconcile(session,message){const s=this.sessions.get(session);this.reconciles.push({message,expected:`message-${s.operation}`,report:s.report});assert.equal(message,`message-${s.operation}`);return s.report?'complete':s.aborted?'unknown':'active';}
   async abort(session){const s=this.sessions.get(session);s.aborted=true;return this.confirmed;}
-  async reply(session,operation,answer){const s=this.sessions.get(session);s.operation=operation;s.submissions++;const r=await fetch(`${s.callback.url}/report_result`,{method:'POST',headers:{authorization:`Bearer ${s.callback.capability}`,'content-type':'application/json'},body:JSON.stringify(report)});if(!r.ok)throw Error(await r.text());s.report=true;s.answer=answer;}
+  async close(session){this.closeCount++;return this.abort(session);}
+  async reply(session,operation,answer){const s=this.sessions.get(session);s.operation=operation;s.submissions++;const r=await fetch(`${s.callback.url}/report_result`,{method:'POST',headers:{authorization:`Bearer ${s.callback.capability}`,'content-type':'application/json'},body:JSON.stringify(report)});if(!r.ok)throw Error(await r.text());s.report=true;s.answer=answer;this.wake(session);}
   async snapshot(session){const s=this.sessions.get(session);return {address:'http://127.0.0.1:1',password:'private-fake',version:'fake-1',profile:s.profile,session};}
   async restore(snapshot,callback){const value=snapshot;const s=sharedSessions.get(value.session);if(!s)throw Error('fake session disappeared');s.callback=callback;this.sessions.set(value.session,s);return {session:value.session,version:value.version};}
   async reconcileOperation(session,operation){const s=this.sessions.get(session);return {messageId:`message-${operation}`,status:s.report?'complete':'active'};}
@@ -67,9 +69,9 @@ test('an unlimited decision survives recovery and a newly configured cap without
   await next.accept(ready.run_id,ready.activity_id,ready.report_id,ready.brief_version,'Independently checked the result after recovery');
 });
 
-test('an explicitly configured assignment limit still stops and reports expiry',async t=>{
+test('an explicitly configured assignment limit still stops, reports expiry, and disposes the execution',async t=>{
   const f=await fixture(t,1);f.adapter.submit=async(session,operation)=>{f.adapter.sessions.get(session).operation=operation;return {messageId:`message-${operation}`};};
-  const event=await f.runner.dispatch({operation_id:'bounded-wait',kind:'implement',brief});assert.equal(event.kind,'limit_reached');assert.equal(event.payload.stop_confirmed,true);assert.equal((await f.store.load(event.run_id)).writer,false);
+  const event=await f.runner.dispatch({operation_id:'bounded-wait',kind:'implement',brief});assert.equal(event.kind,'limit_reached');assert.equal(event.payload.stop_confirmed,true);assert.equal((await f.store.load(event.run_id)).writer,false);assert.equal(f.adapter.closeCount,1);assert.equal(f.runner.active.size,0);
 });
 
 test('dispatch -> durable question -> reply -> report -> independent accept',async t=>{const f=await fixture(t,30);const event=await f.runner.dispatch({workspace:f.root,operation_id:'op-1',kind:'implement',brief});assert.equal(event.kind,'decision_required');assert.equal(event.payload.id,'q-op-1');const result=await f.runner.reply({run_id:event.run_id,request_id:'q-op-1',operation_id:'reply-1',answer:'Choose A',expected_brief_version:event.brief_version});assert.equal(result.kind,'implementation_ready',JSON.stringify({errors:f.adapter.errors,sessions:[...f.adapter.sessions.values()],reconciles:f.adapter.reconciles.slice(-2),state:await f.store.load(event.run_id)}));const state=await f.store.load(event.run_id);assert.equal(state.lifecycle,'awaiting_review');assert.equal(state.writer,false);await assert.rejects(f.runner.accept(event.run_id,event.activity_id,'stale-report',event.brief_version,'independent review evidence'),/stale/);await f.runner.accept(event.run_id,event.activity_id,result.report_id,event.brief_version,'Spec independently reviewed current source and tests');assert.equal((await f.store.load(event.run_id)).lifecycle,'completed');});
@@ -90,15 +92,45 @@ test('failed server cleanup blocks acceptance without losing the report or attac
   assert.equal((await f.store.load(ready.run_id)).lifecycle,'completed');
 });
 
+test('a terminal run cannot be dispatched again',async t=>{
+  const f=await fixture(t,30);const question=await f.runner.dispatch({operation_id:'terminal-first',kind:'implement',brief});
+  const ready=await f.runner.reply({run_id:question.run_id,request_id:question.payload.id,operation_id:'terminal-answer',answer:'A',expected_brief_version:question.brief_version});
+  await f.runner.accept(question.run_id,question.activity_id,ready.report_id,question.brief_version,'independent review');
+  await assert.rejects(f.runner.dispatch({run_id:question.run_id,supervisor_handle:question.supervisor_handle,operation_id:'terminal-again',kind:'correct',corrections:['no'],expected_brief_version:ready.brief_version}),/terminal/);
+});
+
+test('a failed correction before submission restores the prior review state',async t=>{
+  const f=await fixture(t,30);const question=await f.runner.dispatch({operation_id:'rollback-first',kind:'implement',brief});
+  const ready=await f.runner.reply({run_id:question.run_id,request_id:question.payload.id,operation_id:'rollback-answer',answer:'A',expected_brief_version:question.brief_version});
+  const before=await f.store.load(question.run_id);
+  f.adapter.snapshot=async()=>{throw new Error('snapshot failed before submission');};
+  await assert.rejects(f.runner.dispatch({run_id:question.run_id,supervisor_handle:question.supervisor_handle,operation_id:'rollback-correction',kind:'correct',corrections:['fix'],expected_brief_version:ready.brief_version}),/snapshot failed/);
+  const after=await f.store.load(question.run_id);
+  assert.equal(after.lifecycle,'awaiting_review');assert.equal(after.report_id,before.report_id);assert.equal(after.brief_version,before.brief_version);assert.equal(after.writer,false);assert.deepEqual(after.report,before.report);assert.equal(after.operation_ids['rollback-correction'],undefined);
+});
+
 test('duplicate operation IDs are idempotent and stale replies fail closed',async t=>{const f=await fixture(t,30);const event=await f.runner.dispatch({operation_id:'same',kind:'implement',brief});assert.equal(event.kind,'decision_required');const duplicate=await f.runner.dispatch({operation_id:'same',kind:'implement',brief});assert.equal(duplicate.event_id,event.event_id);await assert.rejects(f.runner.reply({run_id:event.run_id,request_id:'old',operation_id:'reply',answer:'no',expected_brief_version:event.brief_version}),/Stale request ID/);});
 
 test('active workspace lease rejects a concurrent independent run',async t=>{const f=await fixture(t,30);const event=await f.runner.dispatch({operation_id:'writer',kind:'implement',brief});assert.equal(event.kind,'decision_required');await assert.rejects(f.runner.dispatch({operation_id:'second',kind:'implement',brief}),/Workspace writer is owned/);assert.equal((await f.store.load(event.run_id)).writer,true);});
 
 test('ambiguous submission is not replayed on duplicate operation ID',async t=>{const f=await fixture(t);const original=f.adapter.submit.bind(f.adapter);f.adapter.submit=async()=>{throw new Error('connection lost after send may have occurred');};await assert.rejects(f.runner.dispatch({operation_id:'ambiguous',kind:'implement',brief}),/connection lost/);await assert.rejects(f.runner.dispatch({operation_id:'ambiguous',kind:'implement',brief}),/already prepared\/submitted/);f.adapter.submit=original;});
 
-test('cancellation requires adapter stop confirmation and never manufactures success',async t=>{const f=await fixture(t);f.adapter.submit=async(session,operation)=>{f.adapter.sessions.get(session).operation=operation;return {messageId:`message-${operation}`};};const ctrl=new AbortController();const pending=f.runner.dispatch({operation_id:'cancel',kind:'implement',brief},undefined,ctrl.signal);await new Promise(r=>setTimeout(r,30));ctrl.abort();const event=await pending;assert.equal(event.kind,'paused');const state=await f.store.load(event.run_id);assert.equal(state.lifecycle,'paused');assert.equal(state.writer,false);});
+test('cancellation requires adapter stop confirmation, disposes the pump, and never manufactures success',async t=>{const f=await fixture(t);f.adapter.submit=async(session,operation)=>{f.adapter.sessions.get(session).operation=operation;return {messageId:`message-${operation}`};};const ctrl=new AbortController();const pending=f.runner.dispatch({operation_id:'cancel',kind:'implement',brief},undefined,ctrl.signal);await new Promise(r=>setTimeout(r,30));ctrl.abort();const event=await pending;assert.equal(event.kind,'paused');const state=await f.store.load(event.run_id);assert.equal(state.lifecycle,'paused');assert.equal(state.writer,false);assert.equal(f.adapter.closeCount,1);assert.equal(f.runner.active.size,0);await f.runner.close();assert.equal(f.adapter.closeCount,1);});
 
 test('unverified stop retains writer ownership and reports failure',async t=>{const f=await fixture(t);f.adapter.confirmed=false;f.adapter.submit=async(session,operation)=>{f.adapter.sessions.get(session).operation=operation;return {messageId:`message-${operation}`};};const ctrl=new AbortController();const pending=f.runner.dispatch({operation_id:'unconfirmed',kind:'implement',brief},undefined,ctrl.signal);await new Promise(r=>setTimeout(r,30));ctrl.abort();await assert.rejects(pending,/Stop could not be verified/);await assert.rejects(f.runner.dispatch({operation_id:'other',kind:'implement',brief}),/Workspace writer is owned/);});
+
+test('a wait that loops without progress is rejected as polling',async t=>{
+  const f=await fixture(t,30);const q=await f.runner.dispatch({operation_id:'poll-wait',kind:'implement',brief});
+  f.runner.active.get(q.run_id).state.wait_policy={no_progress:2,inspect_count:0,inspect_window_start:0};
+  await assert.rejects(f.runner.wait(q.run_id,q.supervisor_handle,undefined,undefined,q.event_id),/No new material event/);
+});
+
+test('log inspection requires a purpose and the inspection rate limit is enforced',async t=>{
+  const f=await fixture(t,30);const q=await f.runner.dispatch({operation_id:'inspect-policy',kind:'implement',brief});
+  await assert.rejects(f.runner.noteInspection(q.run_id,undefined,'logs'),/purpose/);
+  const state=await f.store.load(q.run_id);state.wait_policy={no_progress:0,inspect_count:30,inspect_window_start:Date.now()};await f.store.save(state);
+  await assert.rejects(f.runner.noteInspection(q.run_id,'review','evidence'),/rate limit/);
+});
 
 test('closing an unresolved callback settles HTTP with failure and preserves the durable question',async t=>{const f=await fixture(t,30);const event=await f.runner.dispatch({operation_id:'close-question',kind:'implement',brief});assert.equal(event.kind,'decision_required');await f.runner.close();await new Promise(r=>setTimeout(r,10));const state=await f.store.load(event.run_id);assert.equal(state.lifecycle,'paused');assert.equal(state.pending.id,event.payload.id);assert.ok(state.events.some(e=>e.event_id===event.event_id));assert.ok(state.events.some(e=>e.kind==='paused'));assert.notEqual(f.adapter.errors.length,0);});
 
@@ -125,7 +157,7 @@ test('canonical materialized image survives source deletion; retained-byte mutat
 
 test('incorrect complete artifact hash is rejected without recomputing it',async t=>{const f=await fixture(t);const bytes=Buffer.from([137,80,78,71,13,10,26,10,1]);await writeFile(join(f.root,'bad.png'),bytes);await assert.rejects(f.runner.dispatch({operation_id:'bad-hash',kind:'implement',brief:{...brief,artifacts:[{id:'bad',path:'bad.png',mime:'image/png',purpose:'fixture',size:bytes.length,sha256:'0'.repeat(64)}]}}),/Supplied artifact hash\/size mismatch/);});
 
-test('accepted but response-lost submission is adopted by operation marker without duplicate prompt',async t=>{const f=await fixture(t,30);f.adapter.confirmed=false;f.adapter.submit=async(session,operation)=>{const s=f.adapter.sessions.get(session);s.operation=operation;s.submissions++;throw Error('response lost after native acceptance');};await assert.rejects(f.runner.dispatch({operation_id:'lost-response',kind:'implement',brief}),/response lost/);const state=await f.store.load((await f.store.listRuns())[0].run_id);const active=JSON.parse(await readFile(join(f.root,'.specship','active-writer.json'),'utf8'));active.pid=2_000_000_000;await writeFile(join(f.root,'.specship','active-writer.json'),JSON.stringify(active));const next=new Runner(new Store(f.root),await readConfig(join(f.root,'config.json')),new FakeAdapter());f.track(next);const abort=new AbortController();const waiting=next.recover(state.run_id,state.supervisor.handle,undefined,abort.signal);await new Promise(r=>setTimeout(r,30));abort.abort();const event=await waiting;assert.equal(event.kind,'paused');assert.equal((await new Store(f.root).load(state.run_id)).adapter.message_id,'message-lost-response');assert.equal(f.adapter.sessions.values().next().value.submissions,1);});
+test('accepted but response-lost submission is adopted by operation marker without duplicate prompt',async t=>{const f=await fixture(t,30);f.adapter.confirmed=false;f.adapter.submit=async(session,operation)=>{const s=f.adapter.sessions.get(session);s.operation=operation;s.submissions++;throw Error('response lost after native acceptance');};await assert.rejects(f.runner.dispatch({operation_id:'lost-response',kind:'implement',brief}),/response lost/);const state=await f.store.load((await f.store.listRuns())[0].run_id);const active=JSON.parse(await readFile(join(f.root,'.specship','active-writer.json'),'utf8'));active.pid=2_000_000_000;await writeFile(join(f.root,'.specship','active-writer.json'),JSON.stringify(active));const next=new Runner(new Store(f.root),await readConfig(join(f.root,'config.json')),new FakeAdapter());f.track(next);const abort=new AbortController();const waiting=next.recover(state.run_id,state.supervisor.handle,undefined,abort.signal);await new Promise(r=>setTimeout(r,30));abort.abort();const event=await waiting;assert.equal(event.kind,'execution_failed');assert.match(event.payload.reason,/could not be reconciled/);assert.equal((await new Store(f.root).load(state.run_id)).adapter.message_id,'message-lost-response');assert.equal(f.adapter.sessions.values().next().value.submissions,1);});
 
 test('unconfirmed recovery stop retains writer lease and partial-work ownership',async t=>{const f=await fixture(t,30);const event=await f.runner.dispatch({operation_id:'stop-unconfirmed',kind:'implement',brief});f.adapter.confirmed=false;await f.runner.close();const lease=JSON.parse(await readFile(join(f.root,'.specship','active-writer.json'),'utf8'));lease.pid=2_000_000_000;await writeFile(join(f.root,'.specship','active-writer.json'),JSON.stringify(lease));const adapter=new FakeAdapter();adapter.confirmed=false;const next=new Runner(new Store(f.root),await readConfig(join(f.root,'config.json')),adapter);f.track(next);const failure=await next.recover(event.run_id,event.supervisor_handle);assert.equal(failure.kind,'execution_failed');assert.equal((await new Store(f.root).load(event.run_id)).writer,true);assert.ok(await readFile(join(f.root,'.specship','active-writer.json'),'utf8'));});
 
@@ -136,7 +168,7 @@ test('attached pause reconciles and resume explicitly continues the existing ses
 test('permission grants fail closed, including after deferral; rejection resolves the exact native request',async t=>{
   const f=await fixture(t,30);let resolved=0;
   f.adapter.submit=async(session,operation)=>{const s=f.adapter.sessions.get(session);s.operation=operation;s.submissions++;s.events.push({type:'permission',data:{id:'native-permission',sessionID:session,permission:'bash',patterns:['node --test']}});for(const wake of s.waiters.splice(0))wake();return {messageId:`message-${operation}`};};
-  f.adapter.resolvePermission=async(session,id,answer)=>{assert.equal(id,'native-permission');assert.equal(answer,'reject');resolved++;const s=f.adapter.sessions.get(session);const response=await fetch(s.callback.url+'/report_result',{method:'POST',headers:{authorization:`Bearer ${s.callback.capability}`,'content-type':'application/json'},body:JSON.stringify(report)});assert.equal(response.status,200);s.report=true;};
+  f.adapter.resolvePermission=async(session,id,answer)=>{assert.equal(id,'native-permission');assert.equal(answer,'reject');resolved++;const s=f.adapter.sessions.get(session);const response=await fetch(s.callback.url+'/report_result',{method:'POST',headers:{authorization:`Bearer ${s.callback.capability}`,'content-type':'application/json'},body:JSON.stringify(report)});assert.equal(response.status,200);s.report=true;f.adapter.wake(session);};
   const permission=await f.runner.dispatch({operation_id:'native-permission-dispatch',kind:'implement',brief});assert.equal(permission.kind,'user_input_required');
   const base={run_id:permission.run_id,request_id:'native-permission',expected_brief_version:permission.brief_version};
   for(const answer of ['once','always','human approved'])await assert.rejects(f.runner.reply({...base,operation_id:`grant-${answer}`,answer}),/permission grants are disabled/);
@@ -174,9 +206,21 @@ test('outside edits invalidate acceptance and require a decision after exact-ses
   const result=await next.reply({run_id:q.run_id,request_id:decision.payload.id,operation_id:'reviewed-outside-edit',answer:'The outside notes edit is authorized. Keep it and validate the implementation.',expected_brief_version:q.brief_version});assert.equal(result.kind,'implementation_ready');assert.equal(await readFile(join(f.root,'user-notes.txt'),'utf8'),'another outside edit after close');
 });
 
+test('recovery stops when native execution cannot be reconciled instead of waiting forever',async t=>{
+  const f=await fixture(t,30);const question=await f.runner.dispatch({operation_id:'unreconciled',kind:'implement',brief});
+  const ready=await f.runner.reply({run_id:question.run_id,request_id:question.payload.id,operation_id:'unreconciled-answer',answer:'A',expected_brief_version:question.brief_version});
+  assert.equal(ready.kind,'implementation_ready');await f.runner.close();
+  const lease=JSON.parse(await readFile(join(f.root,'.specship','active-writer.json'),'utf8'));lease.pid=2_000_000_000;await writeFile(join(f.root,'.specship','active-writer.json'),JSON.stringify(lease));
+  const adapter=new FakeAdapter();adapter.reconcile=async()=>'unknown';
+  const next=f.track(new Runner(new Store(f.root),await readConfig(join(f.root,'config.json')),adapter));
+  const failure=await next.recover(ready.run_id,ready.supervisor_handle);
+  assert.equal(failure.kind,'execution_failed');assert.match(failure.payload.reason,/could not be reconciled/);
+  assert.equal((await next.store.load(ready.run_id)).writer,false);
+});
+
 test('a final needs-decision report can be answered and replaced by a fresh report',async t=>{
   const f=await fixture(t,30);
-  f.adapter.submit=async(session,operation)=>{const s=f.adapter.sessions.get(session);s.operation=operation;s.submissions++;const response=await fetch(s.callback.url+'/report_result',{method:'POST',headers:{authorization:`Bearer ${s.callback.capability}`,'content-type':'application/json'},body:JSON.stringify({...report,status:'needs_decision',remaining_issues:['Choose the approved behavior']})});assert.equal(response.status,200);s.report=true;return {messageId:`message-${operation}`};};
+  f.adapter.submit=async(session,operation)=>{const s=f.adapter.sessions.get(session);s.operation=operation;s.submissions++;const response=await fetch(s.callback.url+'/report_result',{method:'POST',headers:{authorization:`Bearer ${s.callback.capability}`,'content-type':'application/json'},body:JSON.stringify({...report,status:'needs_decision',remaining_issues:['Choose the approved behavior']})});assert.equal(response.status,200);s.report=true;f.adapter.wake(session);return {messageId:`message-${operation}`};};
   const decision=await f.runner.dispatch({operation_id:'reported-decision',kind:'implement',brief});assert.equal(decision.kind,'decision_required');assert.equal(decision.payload.request_id,decision.report_id);
   const ready=await f.runner.reply({run_id:decision.run_id,request_id:decision.payload.request_id,operation_id:'answer-reported-decision',answer:'Continue within the approved brief.',expected_brief_version:decision.brief_version});assert.equal(ready.kind,'implementation_ready');assert.notEqual(ready.report_id,decision.report_id);
 });

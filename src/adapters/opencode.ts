@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { delimiter, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Profile } from '../contracts.js';
+import { isOpenCodeProfile, type OpenCodeProfile, type Profile } from '../contracts.js';
 import type { AdapterEvent, ShipAdapter } from './types.js';
 import { splitModel } from '../config.js';
 
@@ -30,7 +30,7 @@ export class OpenCodeAdapter implements ShipAdapter {
   private address = '';
   private password = '';
   private version = '';
-  private profile?: Profile;
+  private profile?: OpenCodeProfile;
   private streams = new Map<string, QueuedStream>();
   private mediaTypes: string[] = [];
   private diagnostics = '';
@@ -42,7 +42,13 @@ export class OpenCodeAdapter implements ShipAdapter {
 
   constructor(private executable = process.env.OPENCODE_BIN ?? 'opencode', private stopTimeoutMs = 120_000, private testEndpoint?: OpenCodeTestEndpoint) {}
 
+  async capabilities(profile: Profile): Promise<{ media: string[]; resume: boolean; inTurnDecision: boolean }> {
+    if (!isOpenCodeProfile(profile)) throw new Error('OpenCode adapter requires an OpenCode profile');
+    return { media: ['image/png', 'image/jpeg'], resume: true, inTurnDecision: true };
+  }
+
   async validate(profile: Profile, media: string[]): Promise<void> {
+    if (!isOpenCodeProfile(profile)) throw new Error('OpenCode adapter requires an OpenCode profile');
     if (Object.keys(profile.options).some(key => !['variant','shell'].includes(key))) throw new Error('OpenCode profile has unsupported options');
     if(profile.options.shell&&(typeof profile.options.shell!=='string'||!isAbsolute(profile.options.shell)))throw new Error('OpenCode shell must be an absolute executable path');
     if (media.some(type => type !== 'image/png' && type !== 'image/jpeg')) throw new Error('OpenCode media support is verified only for PNG/JPEG images');
@@ -94,7 +100,7 @@ export class OpenCodeAdapter implements ShipAdapter {
     return text ? JSON.parse(text) : null;
   }
 
-  private async startServer(workspace: string, profile: Profile, kind: 'explore' | 'implement' | 'correct', callback: { url: string; capability: string; descriptorPath?:string;timeoutMs?:number }): Promise<void> {
+  private async startServer(workspace: string, profile: OpenCodeProfile, kind: 'explore' | 'implement' | 'correct', callback: { url: string; capability: string; descriptorPath?:string;timeoutMs?:number }): Promise<void> {
     this.workspace=workspace;this.activityKind=kind;
     const port = await this.availablePort();
     this.password = randomBytes(32).toString('hex');
@@ -141,7 +147,7 @@ export class OpenCodeAdapter implements ShipAdapter {
     if (!this.address) throw new Error(`OpenCode server startup timed out: ${this.diagnostics.slice(-1000)}`);
   }
 
-  private async validateLiveProfile(profile: Profile): Promise<void> {
+  private async validateLiveProfile(profile: OpenCodeProfile): Promise<void> {
     const health = await this.request('/global/health');
     if (!supportedVersion(health?.version)) throw new Error(`Unsupported OpenCode version ${health?.version}; requires 1.18.30 or newer`);
     this.version = health.version;
@@ -157,6 +163,7 @@ export class OpenCodeAdapter implements ShipAdapter {
   }
 
   async start(workspace: string, profile: Profile, kind: 'explore' | 'implement' | 'correct', callback: { url: string; capability: string; descriptorPath?:string;timeoutMs?:number }): Promise<{ session: string; version: string }> {
+    if (!isOpenCodeProfile(profile)) throw new Error('OpenCode adapter requires an OpenCode profile');
     const alreadyOwned = Boolean(this.child);
     try {
       if (!this.child && this.testEndpoint) {
