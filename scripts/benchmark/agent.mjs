@@ -66,6 +66,11 @@ try {
   }
   if (usesDshShip(task.arm)) {
     if (!process.env.DEEPSEEK_API_KEY) throw Error('DEEPSEEK_API_KEY is required for the DSH benchmark arm');
+    // Codex can sanitize provider variables for its MCP children. Put the key in
+    // DSH's own private credential store as well as the launch environment.
+    const dshHome = process.env.DSH_HOME ?? '/root/.dsh';
+    await mkdir(dshHome, { recursive: true, mode: 0o700 });
+    await writeFile(`${dshHome}/.credentials.yaml`, `version: 1\nrefs:\n  DEEPSEEK_API_KEY: ${JSON.stringify(process.env.DEEPSEEK_API_KEY)}\n`, { mode: 0o600 });
     result.ship_profile_preflight = await checkDshProfile(root, { harness: 'deepseek', model: task.ship.model, executable: '/usr/local/bin/dsh', options: { ...(task.ship.effort ? { reasoning_effort: task.ship.effort } : {}), sandbox: 'workspace-write' } });
   }
   // The standard SWE-bench Python instance images use this conda environment.

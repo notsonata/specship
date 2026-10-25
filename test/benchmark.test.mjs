@@ -26,7 +26,7 @@ test('Ship catalog preflight validates the exact profile and cleanup without sub
 });
 
 test('DSH preflight starts a real session shape and writes only a disposable descriptor', async t => {
-  const profile={harness:'deepseek',model:'deepseek-official/deepseek-flash',executable:'/usr/local/bin/dsh',options:{reasoning_effort:'high',sandbox:'workspace-write'}};
+  const profile={harness:'deepseek',model:'deepseek-official/deepseek-v4-flash',executable:'/usr/local/bin/dsh',options:{reasoning_effort:'high',sandbox:'workspace-write'}};
   let descriptorPath;
   const adapter={
     async validate(p,media){assert.equal(p,profile);assert.deepEqual(media,[]);},
@@ -159,10 +159,10 @@ test('benchmark CLI preserves configuration, defaults to dry runs, and detects c
   await writeFile(opencodeFile, JSON.stringify({ openai: { type: 'api', key: 'fixture-key' } }));
   await assert.rejects(checkSubscriptions(config, ['codex', 'specship']), /not a subscription login/);
   const paid = cli('run', '--execute');assert.notEqual(paid.status, 0);assert.match(paid.stderr, /Set spec.model/);
-  config.arms = ['specship-dsh'];config.spec.model = 'gpt-6.1-sol';config.ship.model = 'openai/gpt-6-luna';config.dsh = { model: 'deepseek-official/deepseek-flash', effort: 'high', rates: null };config.auth.mode = 'api';config.credential_env = [];
+  config.arms = ['specship-dsh'];config.spec.model = 'gpt-6.1-sol';config.ship.model = 'openai/gpt-6-luna';config.dsh = { model: 'deepseek-official/deepseek-v4-flash', effort: 'high', rates: null };config.auth.mode = 'api';config.credential_env = [];
   await writeFile(join(home, 'config.json'), JSON.stringify(config));
   const dshPlan = JSON.parse(cli('plan', '--arm', 'specship-dsh').stdout);
-  assert.deepEqual(dshPlan.arms, ['specship-dsh']);assert.equal(dshPlan.models.dsh, 'deepseek-official/deepseek-flash');
+  assert.deepEqual(dshPlan.arms, ['specship-dsh']);assert.equal(dshPlan.models.dsh, 'deepseek-official/deepseek-v4-flash');
   const dshPaid = cli('run', '--execute', '--arm', 'specship-dsh');assert.notEqual(dshPaid.status, 0);assert.match(dshPaid.stderr, /DEEPSEEK_API_KEY/);
   const trial = join(home, 'runs', 'test-run', 'case--specship--0');await mkdir(trial, { recursive: true });
   await writeFile(join(home, 'runs', 'test-run', 'manifest.json'), JSON.stringify({ dataset_hash: digest(rows.slice(0, 2)), plan: { arms: ['specship'], cases: rows.slice(0, 2), repetitions: 1, attempts: 2 } }));

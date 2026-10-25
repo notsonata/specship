@@ -102,7 +102,7 @@ npm run benchmark -- init
     "rates": null
   },
   "dsh": {
-    "model": "deepseek-official/deepseek-flash",
+    "model": "deepseek-official/deepseek-v4-flash",
     "effort": "high",
     "rates": null
   },
