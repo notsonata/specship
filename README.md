@@ -7,7 +7,7 @@
 <a id="preview-status"></a>
 
 > [!NOTE]
-> **Specship is in preview.** Codex + OpenCode on Windows is the tested path. macOS setup is included but live testing is still pending. DeepSeek Harness is a preview. Install from the `redesign` branch.
+> **Specship is in preview.** Codex + OpenCode on Windows is the tested path. macOS setup is included but live testing is still pending. DeepSeek Harness is a preview. Install from the `redesign-beta` branch.
 
 [![Status: Preview](https://img.shields.io/badge/status-preview-f59e0b?style=flat-square)](#preview-status)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square)](LICENSE)
@@ -77,7 +77,7 @@ flowchart LR
 From the root of the project you want Ship to edit:
 
 ```sh
-git clone --branch redesign https://github.com/notsonata/specship.git .specship/runtime
+git clone --branch redesign-beta https://github.com/notsonata/specship.git .specship/runtime
 cd .specship/runtime
 npm ci
 npm run build
@@ -161,7 +161,7 @@ If you prefer to let an agent do the file work, give it this prompt:
 ```text
 Install Specship for my project at <absolute project path>.
 
-Use https://github.com/notsonata/specship and the redesign branch.
+Use https://github.com/notsonata/specship and the redesign-beta branch.
 Read the README. Check my OS and installed tools.
 Clone into .specship/runtime, run npm ci and npm run build, then run setup.
 Copy the spec and ship skills into .agents/skills.
