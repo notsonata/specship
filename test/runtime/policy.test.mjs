@@ -95,6 +95,19 @@ test('events are archived for bounded inspection without unbounded state growth'
   assert.equal(archived.at(-1).event_id, event.event_id);
 });
 
+test('per-run exclusive transactions serialize callback mutations', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'specship-lock-'));
+  t.after(async () => { await rm(root, { recursive: true, force: true }); });
+  const store = new Store(root); await store.initialize();
+  const state = await store.create();
+  const order = [];
+  await Promise.all([
+    store.exclusive(state.run_id, async () => { order.push('first-start'); await new Promise(resolve => setTimeout(resolve, 30)); order.push('first-end'); }),
+    store.exclusive(state.run_id, async () => { order.push('second'); }),
+  ]);
+  assert.deepEqual(order, ['first-start', 'first-end', 'second']);
+});
+
 test('structured tool errors keep a stable code and message', () => {
   const result = toToolError(new SpecshipError('WAIT_WITHOUT_PROGRESS', 'no new event', { details: { run_id: 'r' } }));
   assert.equal(result.isError, true);

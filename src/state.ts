@@ -13,6 +13,20 @@ export class Store {
   private writes=new Map<string,Promise<void>>();
   private listeners=new Map<string,Set<() => void>>();
   private operationIndex?: Record<string,string>;
+  private runLocks = new Map<string, Promise<void>>();
+  async exclusive<T>(runId:string, fn:() => Promise<T> | T): Promise<T> {
+    const previous = this.runLocks.get(runId) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const tail = previous.then(() => gate);
+    this.runLocks.set(runId, tail);
+    await previous;
+    try { return await fn(); }
+    finally {
+      release();
+      if (this.runLocks.get(runId) === tail) this.runLocks.delete(runId);
+    }
+  }
   constructor(readonly workspace: string) { this.dir = join(workspace, '.specship'); }
   onChange(runId:string,listener:() => void):() => void {
     let set=this.listeners.get(runId);

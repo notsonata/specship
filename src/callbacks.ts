@@ -17,6 +17,7 @@ export class CallbackHub {
   private base = '';
   private answer?: { id: string; promise: Promise<Answer>; resolve: (value: Answer) => void; reject: (error: Error) => void };
   private waiting = new Set<ServerResponse>();
+  private exclusive<T>(fn: () => Promise<T> | T): Promise<T> { return this.store.exclusive(this.state.run_id, fn); }
   private detachIfUnanswered(): void {
     if (this.waiting.size || !this.answer) return;
     const pending = this.answer;
@@ -40,70 +41,83 @@ export class CallbackHub {
           const question = DecisionRequest.parse(body);
           const key = JSON.stringify(question.request_id);
           const fingerprint = JSON.stringify(question);
-          const records = this.state.decision_callbacks ??= {};
-          const recorded = records[key];
-          if (recorded && (recorded.activity_id !== this.state.activity_id || recorded.fingerprint !== fingerprint)) throw new Error('Decision request ID was reused with changed input or a different activity');
-          if (recorded?.answer) {
-            await this.store.save(this.state);
-            this.sendAnswer(res, await this.replayAnswer(recorded.answer));
-            return;
-          }
-          if (this.answer && this.answer.id !== question.request_id) throw new Error('A decision callback is already pending');
-          this.waiting.add(res);
-          res.once('close', () => { this.waiting.delete(res); this.detachIfUnanswered(); });
-          let response = this.answer?.promise;
-          if (!this.answer) {
-            const pending = this.state.pending as any;
-            if (recorded && (pending?.id !== question.request_id || !['question', 'deferred'].includes(pending.kind))) throw new Error('Decision request is no longer pending');
-            if (!recorded && (pending && ['question', 'permission', 'deferred', 'report', 'recovery_review'].includes(pending.kind) || ['paused', 'cancelled', 'completed', 'failed', 'awaiting_review'].includes(this.state.lifecycle))) throw new Error('This activity cannot accept a new decision callback');
-            let resolve!: (value: Answer) => void;
-            let reject!: (error: Error) => void;
-            const promise = new Promise<Answer>((yes, no) => { resolve = yes; reject = no; });
-            void promise.catch(() => {});
-            this.answer = { id: question.request_id, promise, resolve, reject };
-            response = promise;
-            if (!recorded) {
-              records[key] = { activity_id: this.state.activity_id!, brief_version: this.state.brief_version, fingerprint };
-              this.state.pending = { kind: 'question', id: question.request_id, body: question };
-              try { await this.store.emit(this.state, 'decision_required', this.state.pending); }
-              catch (error) { this.answer?.reject(error as Error); this.answer = undefined; throw error; }
+          let response: Promise<Answer> | undefined;
+          let replay: Answer | undefined;
+          await this.exclusive(async () => {
+            const records = this.state.decision_callbacks ??= {};
+            const recorded = records[key];
+            if (recorded && (recorded.activity_id !== this.state.activity_id || recorded.fingerprint !== fingerprint)) throw new Error('Decision request ID was reused with changed input or a different activity');
+            if (recorded?.answer) {
+              await this.store.save(this.state);
+              replay = await this.replayAnswer(recorded.answer);
+              return;
             }
-          }
+            if (this.answer && this.answer.id !== question.request_id) throw new Error('A decision callback is already pending');
+            this.waiting.add(res);
+            res.once('close', () => { this.waiting.delete(res); this.detachIfUnanswered(); });
+            response = this.answer?.promise;
+            if (!this.answer) {
+              const pending = this.state.pending as any;
+              if (recorded && (pending?.id !== question.request_id || !['question', 'deferred'].includes(pending.kind))) throw new Error('Decision request is no longer pending');
+              if (!recorded && (pending && ['question', 'permission', 'deferred', 'report', 'recovery_review'].includes(pending.kind) || ['paused', 'cancelled', 'completed', 'failed', 'awaiting_review'].includes(this.state.lifecycle))) throw new Error('This activity cannot accept a new decision callback');
+              let resolve!: (value: Answer) => void;
+              let reject!: (error: Error) => void;
+              const promise = new Promise<Answer>((yes, no) => { resolve = yes; reject = no; });
+              void promise.catch(() => {});
+              this.answer = { id: question.request_id, promise, resolve, reject };
+              response = promise;
+              if (!recorded) {
+                records[key] = { activity_id: this.state.activity_id!, brief_version: this.state.brief_version, fingerprint };
+                this.state.pending = { kind: 'question', id: question.request_id, body: question };
+                try { await this.store.emit(this.state, 'decision_required', this.state.pending); }
+                catch (error) { this.answer?.reject(error as Error); this.answer = undefined; throw error; }
+              }
+            }
+          });
+          if (replay) { this.sendAnswer(res, replay); return; }
           try { this.sendAnswer(res, await response!); }
           finally { this.waiting.delete(res); }
         } else if (req.url === '/report_result') {
-          if (this.answer || ['question', 'permission', 'deferred', 'recovery_review'].includes((this.state.pending as any)?.kind)) throw new Error('Resolve the pending decision before reporting a result');
-          const parsed = Report.safeParse(body);
-          if (!parsed.success) throw new Error('Invalid report schema');
-          if(this.state.activity_kind==='explore'&&'status'in parsed.data||this.state.activity_kind!=='explore'&&!('status' in parsed.data))throw new Error('Report does not match the current activity kind');
-          const report='artifacts'in parsed.data&&parsed.data.artifacts?{...parsed.data,artifacts:await materializeArtifacts(this.store.workspace,parsed.data.artifacts)}:parsed.data;
-          if(this.state.report){if(JSON.stringify(this.state.report)!==JSON.stringify(report))throw new Error('A report is already submitted for this activity');await this.store.save(this.state);if(!res.destroyed)res.writeHead(200).end('{}');return;}
-          this.state.report = report;
-          this.state.report_id = randomUUID();
-          this.state.report_checkpoint = await checkpoint(this.state.checkpoint_root ?? this.store.workspace);
-          this.state.pending = { kind: 'report', id: this.state.report_id };
-          await this.store.save(this.state);
-          this.store.notify(this.state.run_id);
-          if (!res.destroyed) res.writeHead(200).end('{}');
+          await this.exclusive(async () => {
+            if (this.answer || ['question', 'permission', 'deferred', 'recovery_review'].includes((this.state.pending as any)?.kind)) throw new Error('Resolve the pending decision before reporting a result');
+            const parsed = Report.safeParse(body);
+            if (!parsed.success) throw new Error('Invalid report schema');
+            if(this.state.activity_kind==='explore'&&'status'in parsed.data||this.state.activity_kind!=='explore'&&!('status' in parsed.data))throw new Error('Report does not match the current activity kind');
+            const report='artifacts'in parsed.data&&parsed.data.artifacts?{...parsed.data,artifacts:await materializeArtifacts(this.store.workspace,parsed.data.artifacts)}:parsed.data;
+            if(this.state.report){if(JSON.stringify(this.state.report)!==JSON.stringify(report))throw new Error('A report is already submitted for this activity');await this.store.save(this.state);if(!res.destroyed)res.writeHead(200).end('{}');return;}
+            this.state.report = report;
+            this.state.report_id = randomUUID();
+            this.state.report_checkpoint = await checkpoint(this.state.checkpoint_root ?? this.store.workspace);
+            this.state.pending = { kind: 'report', id: this.state.report_id };
+            await this.store.save(this.state);
+            this.store.notify(this.state.run_id);
+            if (!res.destroyed) res.writeHead(200).end('{}');
+          });
         } else if (req.url === '/interrupt') {
-          const native = this.state.supervisor;
-          if (!native?.thread || !native.turn || body.session_id !== native.thread || body.turn_id !== native.turn) throw new Error('Interrupt does not match the active native Codex turn');
-          if (this.state.lifecycle === 'paused') { if (!res.destroyed) res.writeHead(202).end('{}'); return; }
-          this.state.stop_request = { at: new Date().toISOString(), thread: body.session_id, turn: body.turn_id, status: 'requested' };
-          await this.store.save(this.state);
+          let alreadyPaused = false;
+          await this.exclusive(async () => {
+            const native = this.state.supervisor;
+            if (!native?.thread || !native.turn || body.session_id !== native.thread || body.turn_id !== native.turn) throw new Error('Interrupt does not match the active native Codex turn');
+            if (this.state.lifecycle === 'paused') { alreadyPaused = true; return; }
+            this.state.stop_request = { at: new Date().toISOString(), thread: body.session_id, turn: body.turn_id, status: 'requested' };
+            await this.store.save(this.state);
+          });
+          if (alreadyPaused) { if (!res.destroyed) res.writeHead(202).end('{}'); return; }
           if (!res.destroyed) res.writeHead(202).end('{}');
           void (async () => {
             const confirmed = await this.stop('trusted Codex Interrupt hook');
-            if (confirmed) {
-              setPhase(this.state, 'paused'); this.state.writer = false;
-              this.state.stop_request = { ...(this.state.stop_request as object), status: 'confirmed' };
-              await this.store.releaseWriter(this.state.run_id);
-              await this.store.removeInterruptDescriptor(this.state.run_id);
-              await this.store.emit(this.state, 'paused', { reason: 'trusted Interrupt', stop_confirmed: true });
-            } else {
-              this.state.stop_request = { ...(this.state.stop_request as object), status: 'unconfirmed' };
-              await this.store.emit(this.state, 'execution_failed', { reason: 'Interrupt stop was not confirmed; writer retained' });
-            }
+            await this.exclusive(async () => {
+              if (confirmed) {
+                setPhase(this.state, 'paused'); this.state.writer = false;
+                this.state.stop_request = { ...(this.state.stop_request as object), status: 'confirmed' };
+                await this.store.releaseWriter(this.state.run_id);
+                await this.store.removeInterruptDescriptor(this.state.run_id);
+                await this.store.emit(this.state, 'paused', { reason: 'trusted Interrupt', stop_confirmed: true });
+              } else {
+                this.state.stop_request = { ...(this.state.stop_request as object), status: 'unconfirmed' };
+                await this.store.emit(this.state, 'execution_failed', { reason: 'Interrupt stop was not confirmed; writer retained' });
+              }
+            });
           })().catch(() => {});
         } else res.writeHead(404).end();
       } catch (error) {

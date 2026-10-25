@@ -241,7 +241,7 @@ export class Runner {
         if(e.type==='permission'){
           const data=e.data as any;const id=data.permissionID??data.id??data.requestID;
           if(!id||(state.pending as any)?.id===id)continue;
-          state.pending={kind:'permission',id,body:data};await this.store.emit(state,'user_input_required',data);
+          await this.store.exclusive(state.run_id,async()=>{state.pending={kind:'permission',id,body:data};await this.store.emit(state,'user_input_required',data);});
         }
         if(e.type==='idle')this.store.notify(state.run_id);
         if(e.type==='error'){
