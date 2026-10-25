@@ -12,6 +12,7 @@ export class Store {
   readonly dir: string;
   private writes=new Map<string,Promise<void>>();
   private listeners=new Map<string,Set<() => void>>();
+  private operationIndex?: Record<string,string>;
   constructor(readonly workspace: string) { this.dir = join(workspace, '.specship'); }
   onChange(runId:string,listener:() => void):() => void {
     let set=this.listeners.get(runId);
@@ -135,7 +136,26 @@ export class Store {
     }
     return {ok:true,count:lines.length,last_hash:previous,records:lines.slice(offset,offset+limit).map(line=>JSON.parse(line))};
   }
-  async findOperation(id:string):Promise<{state:RunState;result:unknown}|undefined>{for(const run of await readdir(join(this.dir,'runs'))){const state=await this.load(run);if(Object.hasOwn(state.operation_ids,id))return {state,result:state.operation_ids[id]};}return undefined;}
+  private async indexFor(id:string):Promise<string|undefined>{
+    if(!this.operationIndex){
+      try{this.operationIndex=JSON.parse(await readFile(join(this.dir,'operations.json'),'utf8'));}
+      catch{this.operationIndex=undefined;}
+    }
+    if(this.operationIndex?.[id])return this.operationIndex[id];
+    const ids=await readdir(join(this.dir,'runs')).catch(()=>[] as string[]);
+    const index:Record<string,string>={...(this.operationIndex??{})};
+    for(const runId of ids){const state=await this.load(runId).catch(()=>undefined);if(!state)continue;for(const operation of Object.keys(state.operation_ids))index[operation]=runId;}
+    this.operationIndex=index;
+    await privateDirectory(this.dir);
+    await writeFile(join(this.dir,'operations.json'),JSON.stringify(index),{mode:0o600}).catch(()=>{});
+    return index[id];
+  }
+  async findOperation(id:string):Promise<{state:RunState;result:unknown}|undefined>{
+    const indexed=await this.indexFor(id);
+    if(indexed){const state=await this.load(indexed).catch(()=>undefined);if(state&&Object.hasOwn(state.operation_ids,id))return {state,result:state.operation_ids[id]};}
+    for(const run of await readdir(join(this.dir,'runs'))){const state=await this.load(run).catch(()=>undefined);if(state&&Object.hasOwn(state.operation_ids,id))return {state,result:state.operation_ids[id]};}
+    return undefined;
+  }
   async listRuns(offset=0,limit=20){const ids=await readdir(join(this.dir,'runs'));const rows=[];for(const id of ids){const state=await this.load(id);rows.push({run_id:state.run_id,phase:state.phase,lifecycle:state.lifecycle,activity_id:state.activity_id,brief_version:state.brief_version,writer:state.writer,operation_ids:Object.keys(state.operation_ids),supervisor_handle:state.supervisor?.handle});}return rows.sort((a,b)=>a.run_id.localeCompare(b.run_id)).slice(offset,offset+limit);}
    async emit(state: RunState, kind: string, payload: unknown): Promise<unknown> { state.workspace_checkpoint=await checkpoint(state.checkpoint_root??this.workspace);const event = { run_id: state.run_id, activity_id: state.activity_id ?? '', event_id: randomUUID(), brief_version: state.brief_version, profile: (state.profile as { name?: string } | undefined)?.name ?? '', supervisor_handle: state.supervisor?.handle ?? '', ...(state.report_id?{report_id:state.report_id}:{}), kind, payload }; state.events.push(event); await this.save(state); this.notify(state.run_id); return event; }
 }

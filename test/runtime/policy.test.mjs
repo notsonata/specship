@@ -69,6 +69,20 @@ test('v1 run state migrates to v2 and keeps a private backup', async t => {
   assert.equal((await store.transitionAudit(created.run_id)).ok, false);
 });
 
+test('operation lookup uses and refreshes a durable index', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'specship-operation-index-'));
+  t.after(async () => { await rm(root, { recursive: true, force: true }); });
+  const store = new Store(root); await store.initialize();
+  const state = await store.create();
+  state.operation_ids['indexed-operation'] = { operation_id: 'indexed-operation', marker: true };
+  await store.save(state);
+  const found = await store.findOperation('indexed-operation');
+  assert.equal(found.state.run_id, state.run_id);
+  assert.equal(found.result.marker, true);
+  const index = JSON.parse(await readFile(join(root, '.specship', 'operations.json'), 'utf8'));
+  assert.equal(index['indexed-operation'], state.run_id);
+});
+
 test('structured tool errors keep a stable code and message', () => {
   const result = toToolError(new SpecshipError('WAIT_WITHOUT_PROGRESS', 'no new event', { details: { run_id: 'r' } }));
   assert.equal(result.isError, true);
