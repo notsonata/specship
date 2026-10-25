@@ -1,8 +1,12 @@
 import { createHash } from 'node:crypto';
 
 export const digest = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
-export const arms = ['codex', 'ship', 'specship'];
+export const arms = ['codex', 'ship', 'specship', 'specship-dsh'];
 export const defaultArms = ['codex', 'specship'];
+export const usesSpec = arm => arm === 'codex' || arm === 'specship' || arm === 'specship-dsh';
+export const usesShip = arm => arm === 'ship' || arm === 'specship' || arm === 'specship-dsh';
+export const usesOpenCodeShip = arm => arm === 'ship' || arm === 'specship';
+export const usesDshShip = arm => arm === 'specship-dsh';
 const count = value => Number.isSafeInteger(value) && value >= 0;
 
 export const treeContents = listing => listing.split('\0').filter(Boolean).map(entry => entry.replace(/^[0-7]+ /, '')).sort();
@@ -76,15 +80,17 @@ export function quotaDelta(snapshot) {
 }
 
 export function trialEstimate(trial, config) {
-  const spec = trial.arm === 'ship' ? 0 : apiEstimate(trial.spec_usage, config.spec?.rates, 'spec');
-  const ship = trial.arm === 'codex' ? 0 : trial.ship_usage_model_matches === false ? null : apiEstimate(trial.ship_usage, config.ship?.rates, 'ship');
-  const knownShip = trial.arm === 'codex' ? 0 : trial.ship_usage_model_matches === false ? null : apiEstimate(trial.ship_usage ?? trial.ship_usage_observed, config.ship?.rates, 'ship');
-  const applicable = [...(trial.arm === 'ship' ? [] : [spec]), ...(trial.arm === 'codex' ? [] : [knownShip])];
+  const specUsed = usesSpec(trial.arm), shipUsed = usesShip(trial.arm);
+  const shipConfig = usesDshShip(trial.arm) ? config.dsh ?? config.ship : config.ship;
+  const spec = specUsed ? apiEstimate(trial.spec_usage, config.spec?.rates, 'spec') : 0;
+  const ship = shipUsed ? trial.ship_usage_model_matches === false ? null : apiEstimate(trial.ship_usage, shipConfig?.rates, 'ship') : 0;
+  const knownShip = shipUsed ? trial.ship_usage_model_matches === false ? null : apiEstimate(trial.ship_usage ?? trial.ship_usage_observed, shipConfig?.rates, 'ship') : 0;
+  const applicable = [...(specUsed ? [spec] : []), ...(shipUsed ? [knownShip] : [])];
   const known = applicable.filter(value => value !== null);
   return {
-    spec_api_equivalent_usd: trial.arm === 'ship' ? null : spec,
-    ship_api_equivalent_usd: trial.arm === 'codex' ? null : ship,
-    known_ship_api_equivalent_usd: trial.arm === 'codex' ? null : knownShip,
+    spec_api_equivalent_usd: specUsed ? spec : null,
+    ship_api_equivalent_usd: shipUsed ? ship : null,
+    known_ship_api_equivalent_usd: shipUsed ? knownShip : null,
     known_api_equivalent_usd: known.length ? known.reduce((sum, value) => sum + value, 0) : null,
     api_equivalent_usd: spec !== null && ship !== null ? spec + ship : null,
   };
@@ -105,7 +111,7 @@ export function summarize(trials, selectedArms = arms) {
       return Object.fromEntries(['input', 'cached_input', 'cache_write', 'output', 'input_total', 'output_total', ...(role === 'ship' ? ['reasoning', 'assistant_messages'] : [])].map(key => [key, values.every(value => typeof value[key] === 'number') ? values.reduce((sum, value) => sum + value[key], 0) : null]));
     };
     const roleCost = role => items.length && items.every(t => typeof t[`${role}_api_equivalent_usd`] === 'number') ? items.reduce((sum, t) => sum + t[`${role}_api_equivalent_usd`], 0) : null;
-    const shipMeasurement = arm === 'codex' ? {} : { ship_tokens_observed: tokens('ship', true), ship_usage_complete: items.length > 0 && items.every(t => t.ship_usage !== null && t.ship_usage !== undefined), ship_api_equivalent_usd: roleCost('ship') };
-    return { arm, attempts: items.length, graded: graded.length, resolved: successes, success_rate: items.length && graded.length === items.length ? successes / items.length : null, verified_success_fraction: items.length ? successes / items.length : null, infrastructure_failures: items.filter(t => t.status === 'infrastructure_failure').length, agent_failures: items.filter(t => t.status === 'agent_failure').length, spec_tokens: arm === 'ship' ? null : tokens('spec'), ship_tokens: arm === 'codex' ? null : tokens('ship'), ...shipMeasurement, api_requests: items.length && items.every(t => Number.isSafeInteger(t.api_requests)) ? items.reduce((sum, t) => sum + t.api_requests, 0) : null, api_equivalent_usd: cost, known_api_equivalent_usd: knownCosts.length ? knownCosts.reduce((sum, value) => sum + value, 0) : null, actual_billed_usd: completeBilling ? items.reduce((sum, t) => sum + t.actual_billed_usd, 0) : null, cost_per_success_usd: cost !== null && successes && graded.length === items.length ? cost / successes : null, elapsed_seconds: items.reduce((sum, t) => sum + (t.elapsed_seconds ?? 0), 0), false_acceptances: items.filter(t => t.accepted === true && t.resolved === false).length };
+    const shipMeasurement = usesShip(arm) ? { ship_tokens_observed: tokens('ship', true), ship_usage_complete: items.length > 0 && items.every(t => t.ship_usage !== null && t.ship_usage !== undefined), ship_api_equivalent_usd: roleCost('ship') } : {};
+    return { arm, attempts: items.length, graded: graded.length, resolved: successes, success_rate: items.length && graded.length === items.length ? successes / items.length : null, verified_success_fraction: items.length ? successes / items.length : null, infrastructure_failures: items.filter(t => t.status === 'infrastructure_failure').length, agent_failures: items.filter(t => t.status === 'agent_failure').length, spec_tokens: usesSpec(arm) ? tokens('spec') : null, ship_tokens: usesShip(arm) ? tokens('ship') : null, ...shipMeasurement, api_requests: items.length && items.every(t => Number.isSafeInteger(t.api_requests)) ? items.reduce((sum, t) => sum + t.api_requests, 0) : null, api_equivalent_usd: cost, known_api_equivalent_usd: knownCosts.length ? knownCosts.reduce((sum, value) => sum + value, 0) : null, actual_billed_usd: completeBilling ? items.reduce((sum, t) => sum + t.actual_billed_usd, 0) : null, cost_per_success_usd: cost !== null && successes && graded.length === items.length ? cost / successes : null, elapsed_seconds: items.reduce((sum, t) => sum + (t.elapsed_seconds ?? 0), 0), false_acceptances: items.filter(t => t.accepted === true && t.resolved === false).length };
   });
 }

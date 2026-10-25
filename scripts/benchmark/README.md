@@ -17,11 +17,11 @@ The harness is intentionally conservative:
 | `codex` | One Codex coding agent |
 | `ship` | One OpenCode coding agent |
 | `specship` | Codex as Spec + OpenCode as Ship |
+| `specship-dsh` | Codex as Spec + DeepSeek Harness as Ship |
 
 The default arms are `codex` and `specship`. Add or remove arms in `config.json`.
 
-> [!NOTE]
-> The benchmark currently uses OpenCode for the Ship arm. DeepSeek Harness is supported by the normal Codex setup, but it is **not yet a benchmark arm**. A DSH arm needs a Linux DSH runtime, container authentication, and DSH-specific usage accounting.
+`specship-dsh` uses the official DeepSeek API-key route (`deepseek-official/...`) inside the Linux benchmark container. It requires `DEEPSEEK_API_KEY` and `auth.mode: "api"`; saved Codex/OpenCode subscription auth does not apply to this arm. Quality is measured normally, but DSH usage and API-equivalent cost remain `null` because the benchmark does not have a durable DSH token-usage export yet.
 
 ## Prerequisites
 
@@ -30,8 +30,9 @@ The default arms are `codex` and `specship`. Add or remove arms in `config.json`
 | Node.js | 22 or newer |
 | Docker | A working daemon; Linux containers with `linux/amd64` support |
 | Python | 3.10+ for the SWE-bench evaluator |
-| Codex | Installed and authenticated for the `codex` and `specship` arms |
+| Codex | Installed and authenticated for the `codex`, `specship`, and `specship-dsh` arms |
 | OpenCode | Installed and authenticated for the `ship` and `specship` arms |
+| DeepSeek API key | `DEEPSEEK_API_KEY` for the `specship-dsh` arm |
 
 The controller uses Docker. The agent runs inside disposable `swebench/sweb.eval.x86_64.*` containers and never receives the benchmark cases or gold patches.
 
@@ -63,9 +64,10 @@ npm run benchmark -- init
   "python": "python",
   "codex_version": "0.162.0-alpha.17.2",
   "opencode_version": "1.18.30",
+  "dsh_version": "0.2.1-rc.2",
   "instance_image": "swebench/sweb.eval.x86_64.{instance_id}:latest",
   "swebench_version": "5.0.2",
-  "arms": ["codex", "specship"],
+  "arms": ["codex", "specship", "specship-dsh"],
   "spec": {
     "model": "your-spec-model",
     "effort": "high",
@@ -73,6 +75,11 @@ npm run benchmark -- init
   },
   "ship": {
     "model": "provider/your-ship-model",
+    "effort": "high",
+    "rates": null
+  },
+  "dsh": {
+    "model": "deepseek-official/deepseek-flash",
     "effort": "high",
     "rates": null
   },
@@ -89,7 +96,8 @@ Key fields:
 
 - **`sample_size`** and **`seed`** select a deterministic subset of the dataset. Freeze them before the first fetch.
 - **`spec.model`** is the model Codex uses to plan and review.
-- **`ship.model`** is the model OpenCode uses to implement.
+- **`ship`** is the OpenCode implementation config.
+- **`dsh`** is the DeepSeek Harness implementation config; `specship-dsh` uses it, so OpenCode and DSH arms can run with different models in the same benchmark.
 - **`effort`** is the model's reasoning effort when supported.
 - **`rates`** are optional USD-per-million-token rates. Without them, token counts remain visible but cost stays unknown.
 - **`timeout_seconds`** is the per-attempt wall-clock limit, including waiting for a Ship decision.
@@ -100,7 +108,7 @@ Keep secrets out of `config.json`. For API mode, name environment variables in `
 
 ### Subscription auth
 
-Use your saved Codex and OpenCode logins:
+Use your saved Codex and OpenCode logins for the `codex`, `ship`, and `specship` arms:
 
 ```json
 "auth": {
@@ -116,10 +124,12 @@ The harness rejects API-key fallback for saved subscription logins and strips un
 
 ```json
 "auth": { "mode": "api" },
-"credential_env": ["CODEX_API_KEY", "OPENAI_API_KEY"]
+"credential_env": ["CODEX_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"]
 ```
 
 Set those variables in the controller environment. Do not put raw keys in the file.
+
+For `specship-dsh`, add `DEEPSEEK_API_KEY` to `credential_env` and set it before running. The container installs DSH and uses the official DeepSeek API-key route; no saved DSH desktop login is copied.
 
 ## Freeze the dataset
 
@@ -167,8 +177,11 @@ Limit a run while developing the harness:
 
 ```sh
 npm run benchmark -- run --execute --arm specship
-npm run benchmark -- run --execute --arm specship --case django__django-11848
+npm run benchmark -- run --execute --arm specship-dsh
+npm run benchmark -- run --execute --arm specship-dsh --case django__django-11848
 ```
+
+The DSH arm is slower to start because its image installs the DSH package and its preflight initializes a real ACP session. Its quality result is directly comparable, but its token and cost fields stay `null` until DSH usage accounting is added.
 
 Each trial writes:
 
@@ -200,6 +213,7 @@ Quality and cost are deliberately separate:
 - `resolved` and `accepted` measure whether the fix worked and whether Spec accepted it;
 - `api_equivalent_usd` estimates what the tokens would cost at the configured rates;
 - `actual_billed_usd` is only set when explicit billing evidence exists;
+- `specship-dsh` quality is measured, but DSH usage and cost remain `null` until a durable DSH token export exists;
 - missing data stays `null`.
 
 A false acceptance is a trial where Spec accepted the report but SWE-bench did not resolve the issue. It is counted separately from a normal failure.

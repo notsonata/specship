@@ -1,9 +1,9 @@
 // Runs only inside a disposable benchmark container. No controller files are mounted.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, writeFile, readFile, readdir, cp, rm, open } from 'node:fs/promises';
-import { codexUsage, shipUsage, trialEstimate, treeContents } from './accounting.mjs';
+import { codexUsage, shipUsage, trialEstimate, treeContents, usesSpec, usesShip, usesOpenCodeShip, usesDshShip } from './accounting.mjs';
 import { subscriptionCredential, subscriptionEnvironment } from './auth.mjs';
-import { checkShipProfile } from './profile.mjs';
+import { checkShipProfile, checkDshProfile } from './profile.mjs';
 import { readShipUsage, applyShipUsage } from './usage.mjs';
 
 const root = '/testbed', output = '/benchmark-output';
@@ -27,7 +27,7 @@ let input = ''; for await (const chunk of process.stdin) input += chunk;
 const task = JSON.parse(input);
 if (task.preflight === true) {
   const head = verifyBase(task.base_commit);
-  console.log(JSON.stringify({ preflight: true, base_commit: task.base_commit, image_head: head, base_contents_verified: true, node: process.version, codex: command('codex', ['--version']).trim(), opencode: command('opencode', ['--version']).trim(), model_calls: 0 }));
+  console.log(JSON.stringify({ preflight: true, base_commit: task.base_commit, image_head: head, base_contents_verified: true, node: process.version, codex: command('codex', ['--version']).trim(), opencode: command('opencode', ['--version']).trim(), dsh: command('dsh', ['--version']).trim(), model_calls: 0 }));
   process.exit(0);
 }
 const started = Date.now();
@@ -39,7 +39,7 @@ try {
     const clean = subscriptionEnvironment(process.env);
     for (const key of Object.keys(process.env)) if (!(key in clean)) delete process.env[key];
     for (const [role, path] of [['codex', '/root/.codex/auth.json'], ['opencode', '/root/.local/share/opencode/auth.json']]) {
-      if (role === 'codex' ? task.arm === 'ship' : task.arm === 'codex') continue;
+      if (role === 'codex' ? !usesSpec(task.arm) : !usesOpenCodeShip(task.arm)) continue;
       const data = subscriptionCredential(role, JSON.parse(await readFile(path, 'utf8')));
       await writeFile(path, JSON.stringify(data), { mode: 0o600 });
     }
@@ -55,14 +55,18 @@ try {
   command('git', ['commit', '-qm', 'Benchmark base']);
   benchmarkBaseReady = true;
   await writeFile('/testbed/.git/info/exclude', '.specship/\n.codex/\n.agents/\n');
-  result.versions = { node: process.version, codex: command('codex', ['--version']).trim(), opencode: command('opencode', ['--version']).trim() };
-  if (task.arm !== 'codex') {
+  result.versions = { node: process.version, codex: command('codex', ['--version']).trim(), opencode: command('opencode', ['--version']).trim(), dsh: command('dsh', ['--version']).trim() };
+  if (usesOpenCodeShip(task.arm)) {
     // Fresh images must refresh public model metadata before Spec spends allowance
     // discovering a missing or stale Ship model/variant during dispatch.
     const catalog = command('opencode', ['models', task.ship.model.split('/')[0], '--refresh']);
     await writeFile(`${output}/ship-models.txt`, catalog);
     if (!catalog.includes(task.ship.model)) throw Error(`Ship model unavailable after catalog refresh: ${task.ship.model}`);
     result.ship_profile_preflight = await checkShipProfile(root, { harness: 'opencode', model: task.ship.model, executable: '/usr/local/bin/opencode', options: { ...(task.ship.effort ? { variant: task.ship.effort } : {}), shell: '/bin/bash' } });
+  }
+  if (usesDshShip(task.arm)) {
+    if (!process.env.DEEPSEEK_API_KEY) throw Error('DEEPSEEK_API_KEY is required for the DSH benchmark arm');
+    result.ship_profile_preflight = await checkDshProfile(root, { harness: 'deepseek', model: task.ship.model, executable: '/usr/local/bin/dsh', options: { ...(task.ship.effort ? { reasoning_effort: task.ship.effort } : {}), sandbox: 'workspace-write' } });
   }
   // The standard SWE-bench Python instance images use this conda environment.
   process.env.PATH = `/opt/miniconda3/envs/testbed/bin:${process.env.PATH}`;
@@ -75,14 +79,18 @@ try {
   } else {
     executable = 'codex';args = ['exec', '--ignore-user-config', '--json', '--sandbox', 'danger-full-access', '-m', task.spec.model, '-c', 'features.multi_agent=false', ...(task.spec.effort ? ['-c', `model_reasoning_effort=${JSON.stringify(task.spec.effort)}`] : [])];
     if (task.auth_mode === 'subscription') args.push('-c', 'forced_login_method="chatgpt"', '-c', 'cli_auth_credentials_store="file"');
-    if (task.arm === 'specship') {
+    if (task.arm === 'specship' || task.arm === 'specship-dsh') {
       await mkdir('/testbed/.specship', { recursive: true });
-      await writeFile('/testbed/.specship/config.json', JSON.stringify({ ship: { default_profile: 'benchmark', profiles: { benchmark: { harness: 'opencode', model: task.ship.model, executable: '/usr/local/bin/opencode', options: { ...(task.ship.effort ? { variant: task.ship.effort } : {}), shell: '/bin/bash' } } } } }));
+      const dsh = usesDshShip(task.arm);
+      const profile = dsh
+        ? { harness: 'deepseek', model: task.ship.model, executable: '/usr/local/bin/dsh', options: { ...(task.ship.effort ? { reasoning_effort: task.ship.effort } : {}), sandbox: 'workspace-write' } }
+        : { harness: 'opencode', model: task.ship.model, executable: '/usr/local/bin/opencode', options: { ...(task.ship.effort ? { variant: task.ship.effort } : {}), shell: '/bin/bash' } };
+      await writeFile('/testbed/.specship/config.json', JSON.stringify({ ship: { default_profile: 'benchmark', profiles: { benchmark: profile } }, limits: { max_dispatch_seconds: null } }));
       await cp('/opt/specship/.agents/skills', '/testbed/.agents/skills', { recursive: true, force: false, errorOnExist: true });
       const config = { 'features.code_mode.direct_only_tool_namespaces': ['mcp__specship'], 'mcp_servers.specship.command': process.execPath, 'mcp_servers.specship.args': ['/opt/specship/dist/cli.js', 'serve', root], 'mcp_servers.specship.required': true, 'mcp_servers.specship.tool_timeout_sec': task.timeout_seconds + 120 };
       for (const [key, value] of Object.entries(config)) args.push('-c', `${key}=${JSON.stringify(value)}`);
     }
-    args.push(task.arm === 'specship' ? `$spec\n${prompt}\nUse the configured Ship agent for implementation and independently review and accept the exact report. If blocked, stop and explain; do not implement the fix yourself.` : prompt);
+    args.push(task.arm === 'specship' || task.arm === 'specship-dsh' ? `$spec\n${prompt}\nUse the configured Ship agent for implementation and independently review and accept the exact report. If blocked, stop and explain; do not implement the fix yourself.` : prompt);
   }
   const events = [], stderr = [];
   const child = spawn(executable, args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -94,7 +102,7 @@ try {
   result.agent_exit_code = exit;
   if (task.arm !== 'ship') result.spec_usage = codexUsage(parsed);
   if (task.arm === 'ship') for (const event of parsed) if (event.sessionID) sessions.add(event.sessionID);
-  if (task.arm === 'specship') {
+  if (task.arm === 'specship' || task.arm === 'specship-dsh') {
     const states = [];
     for (const id of await readdir('/testbed/.specship/runs').catch(() => [])) {
       const state = JSON.parse(await readFile(`/testbed/.specship/runs/${id}/state.json`, 'utf8'));states.push(state);
@@ -105,7 +113,7 @@ try {
     // Save non-secret protocol evidence, never adapter credentials or callback descriptors.
     await writeFile(`${output}/protocol.json`, JSON.stringify(states.map(s => ({ run_id: s.run_id, lifecycle: s.lifecycle, accepted: s.accepted, activity_kind: s.activity_kind, events: s.events.map(e => ({ kind: e.kind, event_id: e.event_id })) })), null, 2));
   }
-  if (task.arm !== 'codex') {
+  if (usesOpenCodeShip(task.arm)) {
     const exports = [];
     const exportErrors = [];
     for (const [index, session] of [...sessions].entries()) {
@@ -127,10 +135,19 @@ try {
     result.ship_usage_source = 'opencode_export';
     result.ship_usage_model_matches = exports.every(data => data.messages.filter(message => message.info?.role === 'assistant').every(message => `${message.info.providerID}/${message.info.modelID}` === task.ship.model));
   }
-  const finished = exit === 0 && !parsed.some(e => ['turn.failed', 'error'].includes(e.type)) && (task.arm === 'ship' || result.spec_usage !== null) && (task.arm !== 'specship' || result.accepted === true);
+  if (usesDshShip(task.arm)) {
+    // DSH does not expose a durable per-message usage database in this harness;
+    // keep quality evidence and leave cost explicitly unknown.
+    result.ship_usage_observed = null;
+    result.ship_usage_complete = false;
+    result.ship_usage = null;
+    result.ship_usage_source = 'dsh_unavailable';
+    result.ship_usage_model_matches = null;
+  }
+  const finished = exit === 0 && !parsed.some(e => ['turn.failed', 'error'].includes(e.type)) && (task.arm === 'ship' || result.spec_usage !== null) && (!result.arm.startsWith('specship') || result.accepted === true);
   result.status = finished ? 'completed' : 'agent_failure';
 } catch (error) { result.error = error.message; }
-if (task.arm !== 'codex') {
+if (usesOpenCodeShip(task.arm)) {
   try {
     const evidence = await readShipUsage('/root/.local/share/opencode/opencode.db', { since: started, model: task.ship.model, reasoningIsSeparate: task.ship.rates?.reasoning_is_separate });
     await writeFile(`${output}/ship-usage.json`, JSON.stringify(evidence, null, 2));

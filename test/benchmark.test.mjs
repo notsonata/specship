@@ -6,7 +6,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { apiEstimate, codexUsage, digest, quotaDelta, selectCases, shipUsage, summarize, treeContents, trialEstimate } from '../scripts/benchmark/accounting.mjs';
 import { checkSubscriptions, subscriptionCredential, subscriptionEnvironment } from '../scripts/benchmark/auth.mjs';
-import { checkShipProfile } from '../scripts/benchmark/profile.mjs';
+import { checkShipProfile, checkDshProfile } from '../scripts/benchmark/profile.mjs';
 
 const rows = Array.from({ length: 12 }, (_, i) => ({ instance_id: `repo__project-${i}`, repo: 'repo/project', base_commit: 'a'.repeat(40), problem_statement: `Fix ${i}`, patch: 'gold must remain outside agent' }));
 
@@ -23,6 +23,19 @@ test('Ship catalog preflight validates the exact profile and cleanup without sub
   assert.deepEqual(calls,['validate','start','close']);
   await assert.rejects(checkShipProfile('fixture',profile,{...adapter,async start(){throw Error('variant unavailable');}}),/variant unavailable/);
   await assert.rejects(checkShipProfile('fixture',profile,{...adapter,async close(){return false;}}),/cleanup/);
+});
+
+test('DSH preflight starts a real session shape and writes only a disposable descriptor', async t => {
+  const profile={harness:'deepseek',model:'deepseek-official/deepseek-flash',executable:'/usr/local/bin/dsh',options:{reasoning_effort:'high',sandbox:'workspace-write'}};
+  let descriptorPath;
+  const adapter={
+    async validate(p,media){assert.equal(p,profile);assert.deepEqual(media,[]);},
+    async start(workspace,p,kind,callback){assert.equal(workspace,'fixture');assert.equal(p,profile);assert.equal(kind,'implement');descriptorPath=callback.descriptorPath;assert.ok(descriptorPath);assert.deepEqual(JSON.parse(await readFile(descriptorPath,'utf8')).capability,'unused-preflight');return {session:'dsh-session',version:'0.2.1-rc.2'};},
+    async close(session){assert.equal(session,'dsh-session');return true;},
+    async submit(){assert.fail('DSH preflight must not submit a prompt');},
+  };
+  assert.deepEqual(await checkDshProfile('fixture',profile,adapter),{model:profile.model,effort:'high',version:'0.2.1-rc.2',model_calls:0});
+  t.after(async()=>{if(descriptorPath)await rm(descriptorPath,{force:true});});
 });
 
 test('failed attempts retain known role costs while incomplete usage leaves the total unknown', () => {
@@ -99,6 +112,21 @@ test('quota deltas require actual snapshots, exclusive usage and unchanged reset
   assert.equal(quotaDelta({ ...snapshot, exclusive: false }), null);
   assert.equal(quotaDelta({ ...snapshot, after: { used_percent: 1, resets_at: 2000 } }), null);
   assert.equal(quotaDelta({ ...snapshot, after: { used_percent: 19, resets_at: 1000 } }), null);
+});
+
+test('the DSH arm keeps Codex spec cost and leaves DSH ship usage unknown', () => {
+  const rates={input:2,cached_input:0.1,cache_write:2.5,output:10};
+  const usage=codexUsage([{type:'turn.completed',usage:{input_tokens:100,cached_input_tokens:80,output_tokens:20}}]);
+  const config={spec:{rates},ship:{rates:{...rates,reasoning_is_separate:true}}};
+  const measured=trialEstimate({arm:'specship-dsh',spec_usage:usage,ship_usage:null},config);
+  assert.equal(measured.spec_api_equivalent_usd,0.000248);
+  assert.equal(measured.ship_api_equivalent_usd,null);
+  assert.equal(measured.known_ship_api_equivalent_usd,null);
+  assert.equal(measured.api_equivalent_usd,null);
+  const summary=summarize([{arm:'specship-dsh',...measured,spec_usage:usage,ship_usage:null}],['specship-dsh'])[0];
+  assert.equal(summary.spec_tokens.input,100);
+  assert.equal(summary.ship_tokens,null);
+  assert.equal(summary.ship_usage_complete,false);
 });
 
 test('quality and cost remain independent; failed attempts count toward cost per success', () => {

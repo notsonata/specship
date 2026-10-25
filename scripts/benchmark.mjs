@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile, readdir, cp } from 'node:fs/promises';
 import { resolve, join, dirname, basename, delimiter, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { arms, defaultArms, digest, selectCases, quotaDelta, summarize, trialEstimate } from './benchmark/accounting.mjs';
+import { arms, defaultArms, digest, selectCases, quotaDelta, summarize, trialEstimate, usesSpec, usesShip, usesOpenCodeShip, usesDshShip } from './benchmark/accounting.mjs';
 import { checkSubscriptions } from './benchmark/auth.mjs';
 import { recoverShipUsage, applyShipUsage } from './benchmark/usage.mjs';
 
@@ -57,8 +57,13 @@ function imageFor(config, row) {
   return image;
 }
 function validateModels(config, selectedArms) {
-  for (const role of ['spec', 'ship']) if (selectedArms.some(a => role === 'spec' ? a !== 'ship' : a !== 'codex')) {
-    if (typeof config[role]?.model !== 'string' || !config[role].model.trim() || /YOUR_|<|>/.test(config[role].model)) throw Error(`Set ${role}.model in ${join(home, 'config.json')}`);
+  const valid = (value, label) => { if (typeof value?.model !== 'string' || !value.model.trim() || /YOUR_|<|>/.test(value.model)) throw Error(`Set ${label}.model in ${join(home, 'config.json')}`); };
+  if (selectedArms.some(usesSpec)) valid(config.spec, 'spec');
+  if (selectedArms.some(usesOpenCodeShip)) valid(config.ship, 'ship');
+  if (selectedArms.some(usesDshShip)) {
+    valid(config.dsh, 'dsh');
+    if (!config.dsh.model.startsWith('deepseek-official/')) throw Error('The DSH benchmark arm requires a deepseek-official/ dsh.model using DEEPSEEK_API_KEY');
+    if (config.dsh.effort && !['off', 'low', 'high', 'max'].includes(config.dsh.effort)) throw Error('DSH dsh.effort must be off, low, high, or max');
   }
   if (!Array.isArray(config.credential_env) || config.credential_env.some(key => !/^[A-Z][A-Z0-9_]*$/.test(key))) throw Error('credential_env must contain environment variable names, never secret values');
   for (const path of [config.auth?.codex_file, config.auth?.opencode_file]) if (path && !isAbsolute(path)) throw Error('Authentication file paths must be absolute');
@@ -69,8 +74,9 @@ async function buildImage(config, row) {
   for (const path of ['package.json', 'package-lock.json', 'dist', '.agents/skills', 'scripts/benchmark']) {
     await mkdir(dirname(join(buildRoot, path)), { recursive: true });await cp(join(repository, path), join(buildRoot, path), { recursive: true });
   }
-  const image = `specship-benchmark:${digest({ instance: imageFor(config, row), codex: config.codex_version, opencode: config.opencode_version, runtime: await readFile(join(repository, 'dist/runner.js'), 'utf8'), accounting: await readFile(join(repository, 'scripts/benchmark/accounting.mjs'), 'utf8'), agent: await readFile(join(repository, 'scripts/benchmark/agent.mjs'), 'utf8') }).slice(0, 20)}`;
-  await processCommand(config.docker, ['build', '--platform', 'linux/amd64', '-f', join(buildRoot, 'scripts/benchmark/Dockerfile'), '--build-arg', `INSTANCE_IMAGE=${imageFor(config, row)}`, '--build-arg', `CODEX_VERSION=${config.codex_version}`, '--build-arg', `OPENCODE_VERSION=${config.opencode_version}`, '-t', image, buildRoot], { timeout: 1_800_000 });
+  const dshVersion = config.dsh_version ?? '0.2.1-rc.2';
+  const image = `specship-benchmark:${digest({ instance: imageFor(config, row), codex: config.codex_version, opencode: config.opencode_version, dsh: dshVersion, runtime: await readFile(join(repository, 'dist/runner.js'), 'utf8'), accounting: await readFile(join(repository, 'scripts/benchmark/accounting.mjs'), 'utf8'), agent: await readFile(join(repository, 'scripts/benchmark/agent.mjs'), 'utf8') }).slice(0, 20)}`;
+  await processCommand(config.docker, ['build', '--platform', 'linux/amd64', '-f', join(buildRoot, 'scripts/benchmark/Dockerfile'), '--build-arg', `INSTANCE_IMAGE=${imageFor(config, row)}`, '--build-arg', `CODEX_VERSION=${config.codex_version}`, '--build-arg', `OPENCODE_VERSION=${config.opencode_version}`, '--build-arg', `DSH_VERSION=${dshVersion}`, '-t', image, buildRoot], { timeout: 1_800_000 });
   const imageId = (await processCommand(config.docker, ['image', 'inspect', '--format', '{{.Id}}', image], { capture: true })).trim();
   return { image, imageId };
 }
@@ -102,7 +108,7 @@ async function gradePatch(config, datasetPath, evalRoot, instanceId, label, patc
 
 if (action === 'init') {
   await mkdir(home, { recursive: true, mode: 0o700 });
-  const config = { schema: 1, dataset: 'SWE-bench/SWE-bench_Lite', dataset_config: 'default', split: 'test', sample_size: 5, seed: 'specship-v1', repetitions: 1, timeout_seconds: 1800, docker: 'docker', python: 'python', swebench_version: '5.0.2', codex_version: '0.162.0-alpha.17.2', opencode_version: '1.18.30', instance_image: 'swebench/sweb.eval.x86_64.{instance_id}:latest', credential_env: ['CODEX_API_KEY', 'OPENAI_API_KEY'], spec: { model: null, effort: 'high', rates: null }, ship: { model: null, effort: 'high', rates: null }, pricing_note: 'Supply USD per million tokens as input/cached_input/cache_write/output, with source/date. Ship rates also require reasoning_is_separate true/false for the configured harness/provider. Keep rates null when unknown. No cost is actual billing.' };
+  const config = { schema: 1, dataset: 'SWE-bench/SWE-bench_Lite', dataset_config: 'default', split: 'test', sample_size: 5, seed: 'specship-v1', repetitions: 1, timeout_seconds: 1800, docker: 'docker', python: 'python', swebench_version: '5.0.2', codex_version: '0.162.0-alpha.17.2', opencode_version: '1.18.30', dsh_version: '0.2.1-rc.2', instance_image: 'swebench/sweb.eval.x86_64.{instance_id}:latest', credential_env: ['CODEX_API_KEY', 'OPENAI_API_KEY'], spec: { model: null, effort: 'high', rates: null }, ship: { model: null, effort: 'high', rates: null }, dsh: { model: null, effort: 'high', rates: null }, pricing_note: 'Supply USD per million tokens as input/cached_input/cache_write/output, with source/date. Ship rates also require reasoning_is_separate true/false for the configured harness/provider. Keep rates null when unknown. No cost is actual billing.' };
   config.arms = defaultArms;config.credential_env = [];
   config.auth = { mode: 'subscription', codex_file: null, opencode_file: null };
   await save(join(home, 'config.json'), config, true);
@@ -131,7 +137,7 @@ if (action === 'init') {
   if (selectedArms.some(a => !arms.includes(a))) throw Error('Unknown benchmark arm');
   const cases = options['--case'] ? lock.cases.filter(c => c.instance_id === options['--case']) : lock.cases;
   if (!cases.length) throw Error('No matching case');
-  const plan = { cases: cases.map(c => ({ instance_id: c.instance_id, image: imageFor(config, c) })), arms: selectedArms, repetitions: config.repetitions, attempts: cases.length * selectedArms.length * config.repetitions, timeout_seconds: config.timeout_seconds, models: { spec: config.spec.model, ship: config.ship.model }, prices_configured: Boolean(config.spec.rates), paid_calls_enabled: action === 'run' && options['--execute'] === true };
+  const plan = { cases: cases.map(c => ({ instance_id: c.instance_id, image: imageFor(config, c) })), arms: selectedArms, repetitions: config.repetitions, attempts: cases.length * selectedArms.length * config.repetitions, timeout_seconds: config.timeout_seconds, models: { spec: config.spec.model, ship: config.ship.model, dsh: config.dsh?.model ?? null }, prices_configured: Boolean(config.spec.rates), paid_calls_enabled: action === 'run' && options['--execute'] === true };
   plan.authentication = config.auth?.mode ?? 'api';
   if (action === 'build' || action === 'preflight') {
     for (const row of cases) {
@@ -143,10 +149,14 @@ if (action === 'init') {
   else {
     validateModels(config, selectedArms);
     const availableEnv = plan.authentication === 'subscription' ? [] : config.credential_env.filter(key => process.env[key]);
-    if (plan.authentication === 'subscription') await checkSubscriptions(config, selectedArms);
-    else {
-      if (selectedArms.some(a => a !== 'ship') && !config.auth?.codex_file && !availableEnv.some(key => ['CODEX_API_KEY', 'OPENAI_API_KEY'].includes(key))) throw Error('Configure Codex API credentials or auth.codex_file');
-      if (selectedArms.some(a => a !== 'codex') && !config.auth?.opencode_file && !availableEnv.some(key => key !== 'CODEX_API_KEY')) throw Error('Configure Ship provider credentials or auth.opencode_file');
+    const specArms = selectedArms.filter(usesSpec), openCodeArms = selectedArms.filter(usesOpenCodeShip), dshArms = selectedArms.filter(usesDshShip);
+    if (plan.authentication === 'subscription') {
+      if (dshArms.length) throw Error('The DSH benchmark arm requires auth.mode "api" with DEEPSEEK_API_KEY; saved subscription auth is not used');
+      await checkSubscriptions(config, selectedArms);
+    } else {
+      if (specArms.length && !config.auth?.codex_file && !availableEnv.some(key => ['CODEX_API_KEY', 'OPENAI_API_KEY'].includes(key))) throw Error('Configure Codex API credentials or auth.codex_file');
+      if (openCodeArms.length && !config.auth?.opencode_file && !availableEnv.some(key => key !== 'CODEX_API_KEY')) throw Error('Configure OpenCode provider credentials or auth.opencode_file');
+      if (dshArms.length && !availableEnv.includes('DEEPSEEK_API_KEY')) throw Error('Add DEEPSEEK_API_KEY to credential_env and set it in the environment for the DSH arm');
     }
     const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
     const runRoot = join(home, 'runs', runId);await mkdir(runRoot, { recursive: true });
@@ -163,14 +173,14 @@ if (action === 'init') {
           const trialRoot = join(runRoot, `${row.instance_id}--${arm}--${repeat}`);await mkdir(trialRoot);
           const name = `specship-bench-${randomUUID()}`;
           ownedContainers.set(name, config.docker);
-          const task = { instance_id: row.instance_id, base_commit: row.base_commit, problem_statement: row.problem_statement, arm, spec: config.spec, ship: config.ship, auth_mode: plan.authentication, timeout_seconds: config.timeout_seconds };
+          const task = { instance_id: row.instance_id, base_commit: row.base_commit, problem_statement: row.problem_statement, arm, spec: config.spec, ship: usesDshShip(arm) ? config.dsh : config.ship, auth_mode: plan.authentication, timeout_seconds: config.timeout_seconds };
           console.log(`${runId}: ${row.instance_id} / ${arm} / ${repeat + 1}`);
           let failure, shipEvidence, usageError, stopped = false;
           const trialStarted = Date.now();
           try {
             await processCommand(config.docker, ['create', '--platform', 'linux/amd64', '--name', name, '-i', '--cpus', '4', '--memory', '8g', ...availableEnv.flatMap(key => ['-e', key]), built.image], { capture: true });
-            if (arm !== 'ship' && config.auth?.codex_file) await processCommand(config.docker, ['cp', config.auth.codex_file, `${name}:/root/.codex/auth.json`], { capture: true });
-            if (arm !== 'codex' && config.auth?.opencode_file) await processCommand(config.docker, ['cp', config.auth.opencode_file, `${name}:/root/.local/share/opencode/auth.json`], { capture: true });
+            if (usesSpec(arm) && config.auth?.codex_file) await processCommand(config.docker, ['cp', config.auth.codex_file, `${name}:/root/.codex/auth.json`], { capture: true });
+            if (usesOpenCodeShip(arm) && config.auth?.opencode_file) await processCommand(config.docker, ['cp', config.auth.opencode_file, `${name}:/root/.local/share/opencode/auth.json`], { capture: true });
             await processCommand(config.docker, ['start', '-a', '-i', name], { input: JSON.stringify(task), timeout: config.timeout_seconds * 1000, capture: true });
           } catch (error) { failure = error.message; }
           // Kill the container, not just the docker client; this also stops Ship descendants.
@@ -181,7 +191,7 @@ if (action === 'init') {
           } catch (error) { failure ??= error.message; }
           // Recover durable accounting even when the agent was killed or its export failed.
           try {
-            if (arm !== 'codex') {
+            if (usesOpenCodeShip(arm)) {
               if (!stopped) await processCommand(config.docker, ['stop', '--time', '5', name], { capture: true });
               shipEvidence = await recoverShipUsage(config.docker, name, { since: trialStarted, model: config.ship.model, reasoningIsSeparate: config.ship.rates?.reasoning_is_separate }, processCommand);
               await save(join(trialRoot, 'ship-usage.json'), shipEvidence);
@@ -193,7 +203,7 @@ if (action === 'init') {
           catch { result = { arm, instance_id: row.instance_id, status: 'infrastructure_failure', resolved: null, api_equivalent_usd: null, error: failure ?? 'No result from container' }; }
           if (failure) result.controller_error = failure;
           if (shipEvidence) applyShipUsage(result, shipEvidence);
-          if (usageError && arm !== 'codex') result.ship_usage_recovery_error = usageError;
+          if (usageError && usesOpenCodeShip(arm)) result.ship_usage_recovery_error = usageError;
           Object.assign(result, trialEstimate(result, config));
           result.image_id = built.imageId;result.repetition = repeat;result.run_id = runId;
           await save(join(trialRoot, 'result.json'), result);

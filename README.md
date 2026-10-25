@@ -352,7 +352,7 @@ Specship refuses ambiguous recovery instead of guessing. If the original Ship pr
 
 ## Benchmarks
 
-The repository includes a frozen SWE-bench Lite harness for comparing Codex, OpenCode, and Specship. It separates quality from API-equivalent cost and requires an explicit `--execute` before any paid model call.
+The repository includes a frozen SWE-bench Lite harness for comparing Codex, OpenCode, and Specship with either OpenCode or DeepSeek Harness as Ship. It separates quality from API-equivalent cost and requires an explicit `--execute` before any paid model call.
 
 See [scripts/benchmark/README.md](scripts/benchmark/README.md) for setup, controls, preflight, and reporting.
 
