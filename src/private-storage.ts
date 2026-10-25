@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { chmod, lstat, mkdir, readdir, realpath } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const execute = promisify(execFile);
@@ -30,10 +30,17 @@ export async function preparePrivateStorage(workspace: string): Promise<void> {
   const root = join(await realpath(workspace), '.specship');
   await privateDirectory(root);
   const identity = await lstat(root);
+  // A hardened root has a protected DACL that grants this user full control, so every
+  // descendant created afterwards inherits it. The full recursive pass is therefore a
+  // one-time migration: repeating it on every launch re-ACLs thousands of unrelated
+  // files (benchmark homes, dependency trees) and made MCP startup exceed client timeouts.
+  const marker = join(root, 'hardened.v1');
+  const hardened = await lstat(marker).then(entry => entry.isFile()).catch(() => false);
   const cached = prepared.get(root);
-  let preparation = cached?.ino === identity.ino && cached.dev === identity.dev ? cached.promise : undefined;
+  let preparation = !hardened && cached?.ino === identity.ino && cached.dev === identity.dev ? cached.promise : undefined;
   if (!preparation) {
     preparation = (async () => {
+      if (hardened) return;
       const paths: string[] = [];
       async function visit(path: string, runtime = false): Promise<void> {
         const entry = await ownedEntry(path);
@@ -89,6 +96,9 @@ foreach ($path in $paths) {
         command.child.stdin!.end(JSON.stringify(paths));
         await command;
       }
+      // Written last, and inheriting the hardened root ACL, so a failed pass never
+      // records success. Delete this file to force a full re-hardening.
+      await writeFile(marker, `${new Date().toISOString()}\n`, { mode: 0o600, flag: 'w' });
     })();
     const entry = { ino: identity.ino, dev: identity.dev, promise: preparation };
     prepared.set(root, entry);
