@@ -57,18 +57,23 @@ Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerS
 $currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
 $sid = $currentIdentity.User
 $paths = [Console]::In.ReadToEnd() | ConvertFrom-Json
+$owners = @{}
 foreach ($path in $paths) {
   $acl = Get-Acl -LiteralPath $path
   $owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
   # Elevated Windows tokens can create files owned by their default owner group.
   # Accept only this token's user/default owner, then normalize ownership to its user.
   if ($owner -ne $sid.Value -and $owner -ne $currentIdentity.Owner.Value) { throw "Private storage is owned by another user: $path" }
+  $owners[$path] = $owner
 }
 foreach ($path in $paths) {
   $directory = Test-Path -LiteralPath $path -PathType Container
   if ($directory) { $acl = New-Object System.Security.AccessControl.DirectorySecurity; $inherit = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit' }
   else { $acl = New-Object System.Security.AccessControl.FileSecurity; $inherit = [System.Security.AccessControl.InheritanceFlags]::None }
-  $acl.SetOwner($sid)
+  # Rewriting the owner needs WRITE_OWNER, which an already-tightened file (one whose
+  # DACL grants only read/write) does not carry. Ownership is already verified above,
+  # so only write it when the value actually changes.
+  if ($owners[$path] -ne $sid.Value) { $acl.SetOwner($sid) }
   $acl.SetAccessRuleProtection($true, $false)
   foreach ($identity in @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')) {
     $principal = New-Object System.Security.Principal.SecurityIdentifier($identity)
