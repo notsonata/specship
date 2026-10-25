@@ -25,7 +25,7 @@ Specship separates those jobs.
 
 | | **Spec** | **Ship** |
 |---|---|---|
-| **Job** | Plan, decide, review, accept | Implement, test, debug, report |
+| **Job** | Set intent, resolve consequential decisions, review once, accept | Investigate, implement, test, debug, report |
 | **Model** | The model in your Codex chat | A separate, usually cheaper model |
 | **Works in** | Codex app or CLI | OpenCode or DeepSeek Harness |
 | **You talk to** | Spec | Never directly |
@@ -55,10 +55,10 @@ flowchart LR
     Spec -->|accept or correction| Runner
 ```
 
-1. **Plan.** Spec inspects the code and asks you about decisions that need your input.
+1. **Plan.** Spec settles intent and consequential decisions; Ship handles repository investigation.
 2. **Brief.** Spec sends Ship a bounded assignment: outcome, boundaries, and acceptance.
 3. **Build.** Ship implements, tests, and handles routine debugging. If it needs a consequential decision, it asks Spec and waits.
-4. **Review.** Spec inspects the result, checks acceptance, and either accepts or sends a focused correction.
+4. **Review.** Spec reviews the delivered criterion evidence, runner check summaries, and a targeted diff once, then accepts or sends a concrete correction. Spec does not routinely rerun Ship's tests or fetch the same report again. Full logs remain on disk; a quiet wait needs no model generations.
 
 ## Quick start
 
@@ -100,9 +100,13 @@ Add `.specship/` to your project's `.gitignore`.
 
 ### 2. Configure Ship
 
-Run setup from `.specship/runtime/`. Replace the executable path and model with your own.
+Run setup from `.specship/runtime/`. OpenCode defaults to its automatically selected model with `high` reasoning. Only the profile name and executable path are required:
 
-**Pick a model first.** OpenCode exposes its installed catalog:
+```powershell
+node dist/cli.js setup --workspace ../.. --profile workhorse --executable "C:\path\to\opencode.exe"
+```
+
+**Choose an explicit model or use OpenCode's default.** OpenCode exposes its installed catalog:
 
 ```powershell
 node dist/cli.js models --executable "C:\path\to\opencode.exe" --query deepseek
@@ -147,6 +151,8 @@ node dist/cli.js setup \
 ```
 
 `openai/gpt-6-luna` is only one available option; the model selector and `--model` accept any model advertised by OpenCode. To use DeepSeek through OpenCode, use the DeepSeek model ID shown by `models` (for example `opencode-go/deepseek-v4-pro`).
+
+Omitting `--model` uses `--model default`. OpenCode's configured `model` takes priority, followed by its most recent available model and then its connected-provider fallback. Specship resolves and validates the selection before submitting work, records the concrete model in the run, and keeps it for corrections and reconnects. New runs resolve the default again. This does not attach to or change the model in an already open OpenCode session. Omitting `--variant` uses `high`; pass `--variant low` or `--variant medium` to override it. A model without the requested variant fails validation before submission.
 
 Setup writes `.specship/config.json` and prints two pieces of Codex configuration. It also creates the local credential file inside the project:
 
@@ -201,7 +207,7 @@ Clone into .specship/runtime, run npm ci and npm run build, then run setup.
 Copy the spec and ship skills into .agents/skills.
 Merge the generated Codex MCP and Interrupt hook settings without overwriting
 existing settings or skills. Add .specship/ to .gitignore.
-Ask me which OpenCode provider/model and effort to use.
+Use OpenCode's default model and high reasoning unless I request an override.
 Verify the build and configuration. Leave sign-in and hook trust to me.
 ```
 
@@ -220,7 +226,7 @@ OpenCode is the primary Ship harness.
     "profiles": {
       "workhorse": {
         "harness": "opencode",
-        "model": "opencode-go/deepseek-v4-pro",
+        "model": "default",
         "executable": "C:/path/to/opencode.exe",
         "options": {
           "variant": "high",
@@ -236,8 +242,8 @@ OpenCode is the primary Ship harness.
 }
 ```
 
-- `model` uses OpenCode's `provider/model` form.
-- `variant` is the reasoning effort when the model supports it.
+- `model` defaults to `"default"`, resolving OpenCode's default automatically at the start of each run. Set an explicit `provider/model` to override it.
+- `variant` defaults to `"high"`, the reasoning effort when the model supports it. Explicit `"low"` and `"medium"` remain supported.
 - `profiles` lets you keep multiple Ship configurations. Ask Spec to use one by name.
 - `limits` is optional; omit it or set `max_dispatch_seconds` to `null` for no assignment deadline.
 

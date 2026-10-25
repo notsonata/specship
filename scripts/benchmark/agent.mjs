@@ -89,13 +89,16 @@ try {
       const dsh = usesDshShip(task.arm);
       const profile = dsh
         ? { harness: 'deepseek', model: task.ship.model, executable: '/usr/local/bin/dsh', options: { ...(task.ship.effort ? { reasoning_effort: task.ship.effort } : {}), sandbox: 'workspace-write' } }
-        : { harness: 'opencode', model: task.ship.model, executable: '/usr/local/bin/opencode', options: { ...(task.ship.effort ? { variant: task.ship.effort } : {}), shell: '/bin/bash' } };
-      await writeFile('/testbed/.specship/config.json', JSON.stringify({ ship: { default_profile: 'benchmark', profiles: { benchmark: profile } }, limits: { max_dispatch_seconds: null } }));
+        : { harness: 'opencode', model: task.ship.model, executable: '/usr/local/bin/opencode', options: { ...(task.ship.effort ? { variant: task.ship.effort } : {}), shell: '/bin/bash', permission: { external_directory: 'allow', webfetch: 'deny' } } };
+      // The benchmark is unattended, so it answers path prompts by configuration instead of
+      // waiting for a human; the dispatch cap turns any other stall into a recorded failure
+      // well before the container timeout.
+      await writeFile('/testbed/.specship/config.json', JSON.stringify({ ship: { default_profile: 'benchmark', profiles: { benchmark: profile } }, limits: { max_dispatch_seconds: Math.max(600, (task.timeout_seconds ?? 1800) - 300) } }));
       await cp('/opt/specship/.agents/skills', '/testbed/.agents/skills', { recursive: true, force: false, errorOnExist: true });
       const config = { 'features.code_mode.direct_only_tool_namespaces': ['mcp__specship'], 'mcp_servers.specship.command': process.execPath, 'mcp_servers.specship.args': ['/opt/specship/dist/cli.js', 'serve', root], 'mcp_servers.specship.required': true, 'mcp_servers.specship.tool_timeout_sec': task.timeout_seconds + 120 };
       for (const [key, value] of Object.entries(config)) args.push('-c', `${key}=${JSON.stringify(value)}`);
     }
-    args.push(task.arm === 'specship' || task.arm === 'specship-dsh' ? `$spec\n${prompt}\nUse the configured Ship agent for implementation and independently review and accept the exact report. If blocked, stop and explain; do not implement the fix yourself.` : prompt);
+    args.push(task.arm === 'specship' || task.arm === 'specship-dsh' ? `$spec\n${prompt}\nUse lean supervision: send the task to the configured Ship agent promptly with a compact brief; Ship owns repository investigation, coding, debugging, and test execution. Do not perform implementation reconnaissance first or repeat Ship's tests. Wait silently during dispatch. Review the returned report and one targeted diff against the original request; rely on runner checks and criterion evidence. Request further Ship work only for a concrete defect or missing evidence. Accept the exact report when satisfied. If blocked, stop and explain; do not implement the fix yourself.` : prompt);
   }
   const events = [], stderr = [];
   const child = spawn(executable, args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });

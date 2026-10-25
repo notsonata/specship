@@ -5,7 +5,7 @@ export interface ShipAdapter {
   readonly name: string;
   capabilities?(profile: Profile): Promise<AdapterCapabilities>;
   validate(profile: Profile, media: string[]): Promise<void>;
-  start(workspace: string, profile: Profile, kind: 'explore'|'implement'|'correct', callback: { url: string; capability: string; descriptorPath?: string; timeoutMs?:number }): Promise<{ session: string; version: string }>;
+  start(workspace: string, profile: Profile, kind: 'explore'|'implement'|'correct', callback: { url: string; capability: string; descriptorPath?: string; timeoutMs?:number }): Promise<{ session: string; version: string; profile?: Profile }>;
   subscribe(session: string, signal: AbortSignal): Promise<void>;
   submit(session: string, operationId: string, prompt: string, artifacts: Array<{ mime: string; name: string; data: Buffer }>): Promise<{ messageId: string }>;
   events(session: string, signal: AbortSignal): AsyncIterable<AdapterEvent>;

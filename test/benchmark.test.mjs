@@ -7,6 +7,16 @@ import { spawnSync } from 'node:child_process';
 import { apiEstimate, codexUsage, digest, quotaDelta, selectCases, shipUsage, summarize, treeContents, trialEstimate } from '../scripts/benchmark/accounting.mjs';
 import { checkSubscriptions, subscriptionCredential, subscriptionEnvironment } from '../scripts/benchmark/auth.mjs';
 import { checkShipProfile, checkDshProfile } from '../scripts/benchmark/profile.mjs';
+import { nonretryableProviderFailure, orderedArms } from '../scripts/benchmark/safety.mjs';
+
+test('paid trials stop on permanent provider errors and Ship-first retains each planned trial once', () => {
+  for (const error of ['HTTP 401 api_key_expired', { statusCode: 402 }, 'insufficient_balance', 'Ship model unavailable after catalog refresh']) assert.equal(nonretryableProviderFailure(error), true);
+  for (const error of ['HTTP 429 rate limited', 'HTTP 503 unavailable', 'assertion failed']) assert.equal(nonretryableProviderFailure(error), false);
+  const arms = ['codex', 'ship', 'specship'];
+  const trials = Array.from({ length: 5 }, (_, index) => orderedArms(arms, index, 0, true).map(arm => `${index}/${arm}`)).flat();
+  assert.equal(trials[0], '0/ship');assert.equal(trials.length, 15);assert.equal(new Set(trials).size, 15);
+  assert.deepEqual(orderedArms(arms, 1, 0, true), ['ship', 'specship', 'codex']);
+});
 
 const rows = Array.from({ length: 12 }, (_, i) => ({ instance_id: `repo__project-${i}`, repo: 'repo/project', base_commit: 'a'.repeat(40), problem_statement: `Fix ${i}`, patch: 'gold must remain outside agent' }));
 
@@ -149,6 +159,8 @@ test('benchmark CLI preserves configuration, defaults to dry runs, and detects c
   assert.notEqual(cli('init').status, 0);assert.equal(await readFile(join(home, 'config.json'), 'utf8'), original);
   await writeFile(join(home, 'cases.lock.json'), JSON.stringify({ sha256: digest(rows.slice(0, 2)), cases: rows.slice(0, 2) }));
   const dry = cli('run');assert.equal(dry.status, 0);assert.match(dry.stdout, /"paid_calls_enabled": false/);assert.match(dry.stdout, /"attempts": 4/);
+  const finishDry = cli('run', '--finish');assert.equal(finishDry.status, 0);assert.equal(JSON.parse(finishDry.stdout.split('Dry run only.')[0]).finish_after_run, true);assert.match(finishDry.stdout, /"paid_calls_enabled": false/);
+  await assert.rejects(readFile(join(home, 'runs'), 'utf8'), { code: 'ENOENT' }, '--finish alone must not execute or grade any trial');
   const plan = JSON.parse(cli('plan').stdout);assert.deepEqual(plan.arms, ['codex', 'specship']);assert.equal(plan.authentication, 'subscription');
   const config = JSON.parse(original);config.spec.model = 'gpt-6.1-sol';config.ship.model = 'openai/gpt-6-luna';
   const codexFile = join(home, 'codex-auth.json'), opencodeFile = join(home, 'opencode-auth.json');

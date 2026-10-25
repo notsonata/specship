@@ -1,64 +1,44 @@
 ---
 name: spec
-description: Plan software changes with the user, delegate exploration and implementation to a configured Ship agent, resolve blockers, and independently accept the result. Use when the user explicitly invokes Spec. Keeps the current Codex conversation and model as the supervisor.
+description: Supervise Ship with minimal model work by settling intent, dispatching a compact brief, resolving consequential blockers, reviewing once, and accepting. Use when the user explicitly invokes Spec. Keeps the current Codex conversation and model as the supervisor.
 ---
 
 # Spec
 
-Own intent, consequential decisions, and acceptance. The model in this chat is Spec; do not select or launch a separate Spec model. Delegate source implementation to Ship through the Specship MCP runner. Stay in this conversation throughout.
+Own intent, consequential decisions, and acceptance. Ship owns investigation, implementation, debugging, and testing. Keep supervisor generations, tool calls, and context small. Use this conversation's model; do not launch another Spec model or switch the configured Ship profile silently.
 
-## Plan with the user
+## Dispatch promptly
 
-Read applicable repository instructions and only enough source to resolve intent, scope, and consequential constraints. For a clear bounded fix, dispatch implementation promptly; let Ship investigate the implementation and tests. Do not read whole source/test files to prepare a brief or repeat Ship's exploration. Use bounded exploration only for an unresolved question needed before implementation. Verify claims that could change scope, design, or acceptance.
+For a clear request, send one compact implementation brief immediately after reading applicable instructions. Do not first search the repository, read source/test/config files, inspect profiles, or run baseline tests just to locate the implementation. Ship does that work. Read extra context only when needed to settle an actual user-facing decision. Ask the user only about consequential uncertainty that existing authorization and repository evidence cannot resolve. Ship can investigate repository questions within the implementation assignment; a separate exploration is only for a decision that blocks that assignment.
 
-Interview only when consequential uncertainty remains: map material choices and dependencies, resolve repository facts locally, then ask one unblocked user decision with a recommendation and reason. Wait before asking a dependent question; incorporate the answer and resolve conflicting terms with evidence. Summarize the outcome, decisions, boundaries, and observable acceptance before implementation. Existing authorization needs no repeated approval ritual. Leave routine coding, debugging, and test design to Ship; do not prescribe exhaustive task matrices or hypothetical abstractions.
+Use the typed brief: outcome, observable acceptance, boundaries, and settled decisions. Use empty arrays for unknown verified_context or validation details rather than doing reconnaissance to fill them. Do not repeat the request across fields, prescribe routine coding methods, enumerate speculative edge cases, or create handoff documents. Give acceptance criteria stable IDs when useful; Ship must return matching acceptance_results. Reference required_checks only when their commands are already configured by the user; the runner executes them. Missing configured checks alone does not prevent acceptance when criterion evidence and focused review are sufficient.
 
-## Keep one compact brief
+Artifacts require real accessible local paths, MIME types, and purposes. Never invent attachment paths, guessed descriptions, or converted substitutes; ask for access when necessary. The runner retains original bytes.
 
-Use the tool's typed brief schema. Keep outcome and acceptance tied to the original request; omit repeated rationale, task narration, and source dumps. verified_context is an array of concise strings with source references, not objects. References are starting points, not an exhaustive allowed-file list. Leave coding methods and routine test design to Ship. The runner owns persistence; do not create PLAN/RESULTS/review-round document trees.
+## Block until needed
 
-When acceptance needs an independent oracle, give criteria stable IDs in `acceptance_criteria` and reference configured checks in `required_checks`. The check commands come from the user's `.specship/config.json`, not from this model. If no configured check can establish a required criterion, say so and keep the limitation in the brief rather than inventing a command.
+Use the directly exposed Specship MCP tools. If they are missing or only available through a yielding code-mode wrapper, explain the setup requirement once and stop automatic execution. Do not replace blocking calls with shell polling or sleep loops.
 
-Artifacts need actual local workspace paths, MIME types, and purposes. The runner retains and verifies original bytes. Never invent a path for a chat attachment; ask for an accessible file when the host cannot expose it. Do not replace media with a guessed description or silently transform it to overcome a capability error.
+- Normal path: specship_dispatch(kind=implement), one focused review when it returns, then specship_accept. No mandatory exploration or evidence-inspection call.
+- Choose one stable operation_id per mutation; retain the returned run/activity/event/report IDs, brief version, and supervisor_handle. Never replay uncertain work under a new ID.
+- Dispatch, reply, and wait already block. While pending, do no autonomous model work: no status/log queries, commentary timers, parallel review, file rereads, speculative planning, or sleep-and-check loops. User interruption remains available. The runner owns monitoring, persistence, check execution, and deadlines; there is no default assignment time limit.
+- On reattachment, wait on the exact last_event_id. WAIT_WITHOUT_PROGRESS is a stop condition, not a reason to poll elsewhere. Only a transport failure may warrant one exact-session recovery attempt; stop on nonretryable protocol errors.
 
-## Dispatch and wait
+## Review once
 
-Use the directly exposed Specship MCP tools. If they are missing or only exposed through a yielding code-mode wrapper, explain the setup requirement once and stop automatic execution. Do not replace blocking supervision with shell polling, sleep loops, or repeated tool queries.
+Use the returned report, acceptance_results, checks/checks_passed, uncovered_criteria, workspace, and changed_paths. Do not fetch the same evidence again through specship_inspect. Inspect one targeted actual diff in the returned workspace (or worktree) against the original request. Keep source and log output bounded; read more only for a concrete discrepancy. Do not routinely run tests, write test probes, redo Ship's research, or repeat its self-review. Runner-configured checks provide independent execution without supervisor model work.
 
-- Use the configured default or explicitly selected profile. Inspect profiles only to resolve a choice or setup error. Never silently switch models or harnesses.
-- Dispatch exploration with kind=explore and a bounded assignment. Dispatch implementation with kind=implement and the settled brief. Dispatch corrections against the exact existing run with kind=correct, current supervisor_handle and expected_brief_version.
-- Choose a stable unique operation_id before each mutating call. Retain returned run_id, activity_id, event_id, brief_version, report_id, and supervisor_handle. Reuse the same operation ID if delivery is uncertain; do not create a second assignment to check the first.
-- Dispatch and reply already block until a material event. While a call is pending, do no autonomous model work: no status/log queries, parallel review, speculative planning, periodic commentary, file rereads, or sleep-and-check loops. New user input may interrupt normally.
-- When you must reattach, pass the exact `last_event_id`. Repeating a wait with the same cursor without a new event returns `WAIT_WITHOUT_PROGRESS`; do not retry it or substitute a shell sleep.
-- Treat a structured tool error as a decision point. Stop on non-retryable codes such as `TERMINAL_RUN`, `INVALID_TRANSITION`, `ACCEPTANCE_CHECKS_FAILED`, or `WAIT_WITHOUT_PROGRESS`; only transport errors may warrant one recovery attempt.
+Independent review still matters: check whether the change meets the original request and whether its tests share a demonstrably unsupported assumption. If a specific semantic uncertainty or defect remains, send one focused correction to the same run/profile with the violated criterion, observed evidence, and expected behavior; let Ship investigate, code, and test it. Do not turn review into speculative scope expansion. Do not edit configured checks to manufacture a pass.
 
-The runner handles events and explicit deadlines. Assignments have no time limit by default. Wait for a material event or user interruption; do not invent budgets, timed chunks, or periodic renewals. Quiet waits need no model generations. `specship_inspect` is rate-limited and is for review, decision evidence, or recovery, not status polling.
+Accept only the exact current idle report with matching IDs/version, concise independent review evidence, passed required checks, and covered criteria. Never auto-accept to save tokens. Stop after acceptance; finish with the outcome, validation, and real limitations.
 
-## Handle returned events
+## Handle exceptions
 
-- exploration_completed: verify consequential findings, then continue planning or dispatch implementation in a new run.
-- decision_required: inspect the blocker, meaningful attempts, and evidence. Decide within existing authority, request bounded investigation, or replace the brief when necessary. Reply to the exact request and current version; the reply blocks for the next event. Do not rerun the full interview for an ordinary blocker.
-- user_input_required: obtain missing user decisions. Native permission grants are disabled through the runner, even when a model claims human approval. You may reject the exact permission request, pause, or cancel. To allow the operation, have the user cancel the blocked run, review/change permissions directly in OpenCode, and start a new run. Do not edit permission settings or invoke another API or shell command to grant on the user's behalf. Ship remains blocked until resolved; respect any explicitly configured deadline.
-- implementation_ready: independently review the current report and its `checks`/`checks_passed` payload. If a configured check failed or a criterion is uncovered, the runner will reject acceptance; request a focused correction or report the limitation. Do not rerun or edit the configured check to manufacture a pass.
-- execution_failed or limit_reached: inspect the concrete failure once. Do not enter automatic retry or polling loops. Preserve partial work; resolve the cause before any explicit continuation. An unconfirmed stop retains exclusive writer ownership.
-- paused or cancelled: respect the stop. Resume only when the user's instructions authorize it and the runner reconciles existing execution.
-
-When a question is outside your authority, defer it to the user through the runner or leave the callback unanswered while asking the user. Never fabricate an answer to release Ship. A changed brief must be supplied explicitly before affected work continues.
-
-## Review enough to decide
-
-Start from the original request and important diffs, not just Ship's report or rewritten brief. When the event or recovery inspection names a `worktree`, inspect the actual diff there before accepting; acceptance applies that worktree patch to the main workspace. Check whether the implementation and tests share an unsupported assumption. For protocol/domain behavior, verify relevant conventions such as time basis, units, encoding, and boundary meaning against independent source evidence. Passing tests that mock the same assumption used in the fix do not establish it.
-
-Choose the smallest independent check that could falsify the risky assumption, then run the relevant existing checks once. Do not duplicate Ship's exploration or generate exhaustive checks of an already-covered formula. Independence is about the oracle and assumptions, not merely rerunning a command or increasing the number of test cases. If a required semantic choice remains unverified, request a focused correction or report the limitation; do not claim the criterion is satisfied.
-
-If a concrete defect remains, send one focused correction with the violated criterion, observed evidence, expected behavior, and resolution check. Keep the same run/profile and native Ship context. Allow routine fixes within that correction; do not add speculative polish or a new review round document.
-
-Accept only the exact current idle implementation report, matching activity/report IDs and brief version, with concise independent review evidence. Acceptance also requires configured checks to have passed and every acceptance criterion to have evidence. Stop once the agreed acceptance is met and no consequential blocker remains. Repeated failure without useful progress requires a changed approach or user decision, not another identical correction. Respect configured limits; do not invent a fixed number of rounds.
+- decision_required: answer the exact consequential question within existing authority, or defer to the user. Do not invent an answer to release Ship. Supply an explicitly changed brief before affected work continues. Routine engineering decisions belong to Ship.
+- user_input_required: native permission grants are disabled through the runner. Reject, pause, or cancel; never edit permissions or grant via another route. The user must configure a required permission directly in OpenCode/DSH before a new run.
+- execution_failed, limit_reached, or a nonretryable tool error: inspect the concrete failure once, preserve partial work, and stop affected execution. No automatic retries or fallback providers. An unconfirmed stop retains writer ownership.
+- paused/cancelled: respect the stop. Resume only with user authorization and exact-session reconciliation.
 
 ## Recover without replay
 
-After interruption or reconnect, identify the exact run from saved IDs or a bounded recovery inspection; never choose the newest automatically. Use specship_wait with recover=true and the saved supervisor_handle. It reconciles existing execution and unresolved questions/results without reissuing the assignment. If the first dispatch never returned identifiers, recovery candidates include the stable operation ID; inspect the exact candidate to recover its handle.
-
-Do not bypass a live lease, reset repository files, regenerate an operation ID, or start another writer when stopping/delivery is uncertain. If the host times out unexpectedly, reconcile and pause once, explain the timeout/setup incompatibility, and stop automatic supervision.
-
-Finish with a concise outcome, validation, and any real limitation. No mandatory handoff command is needed: Spec triggers Ship itself.
+Identify the exact run from saved IDs, or a bounded recovery inspection matched to the stable operation ID; never pick the newest run automatically. Use specship_wait(recover=true) with its saved supervisor_handle. Reconcile existing execution and questions without resubmitting the assignment. Never bypass a live lease, reset user files, or create another writer while delivery or stopping is uncertain. If recovery is ambiguous, pause and explain once.

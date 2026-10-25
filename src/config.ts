@@ -7,12 +7,16 @@ import { DEFAULT_DELIVERY_MARGIN_SECONDS } from './timeouts.js';
 const model = z.string().regex(/^[^/]+\/.+$/);
 const opencode = z.object({
   harness: z.literal('opencode'),
-  model,
+  model: z.union([model, z.literal('default')]).default('default'),
   executable: z.string().min(1).optional(),
   options: z.object({
-    variant: z.enum(['low','medium','high']).optional(),
+    variant: z.enum(['low','medium','high']).default('high'),
     shell: z.string().refine(isAbsolute,'Shell must be an absolute executable path').optional(),
-  }).strict(),
+    // Opt-in native policy for the ship agent. `question` and `task` stay denied
+    // regardless; this exists so an unattended profile can answer path prompts by
+    // configuration instead of blocking on a human.
+    permission: z.record(z.string(), z.enum(['allow','ask','deny'])).optional(),
+  }).strict().default({ variant: 'high' }),
 }).strict();
 const deepseek = z.object({
   harness: z.literal('deepseek'),

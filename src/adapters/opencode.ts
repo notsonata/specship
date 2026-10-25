@@ -2,15 +2,26 @@ import { randomBytes } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { delimiter, dirname, isAbsolute } from 'node:path';
+import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isOpenCodeProfile, type OpenCodeProfile, type Profile } from '../contracts.js';
+import { isOpenCodeProfile, type NativePermissionAction, type OpenCodeProfile, type Profile } from '../contracts.js';
 import type { AdapterEvent, ShipAdapter } from './types.js';
 import { splitModel } from '../config.js';
 
 type NativeMessage = { info: { id: string; role: string; parentID?: string; finish?: string; sessionID?: string }; parts?: Array<{ type: string; text?: string }> };
 type QueuedStream = { controller: AbortController; queue: AdapterEvent[]; wake: Array<() => void>; ready: Promise<void>; setReady: () => void; failure?: Error };
 export interface OpenCodeTestEndpoint { address: string; password: string; version?: string }
+
+const explorePermission: Record<string, NativePermissionAction> = { '*': 'deny', read: 'allow', glob: 'allow', grep: 'allow', specship_callbacks_ask_spec: 'allow', specship_callbacks_report_result: 'allow' };
+
+// Specship owns two rules: questions route to Spec, and subagents stay disabled. A profile
+// may choose everything else (for example allowing `external_directory` in a disposable
+// container) so an unattended run answers the prompt by configuration instead of blocking
+// on a human who is not there. Exploration stays fully locked down.
+export function shipPermissionPolicy(kind: 'explore' | 'implement' | 'correct', overrides?: Record<string, NativePermissionAction>): Record<string, NativePermissionAction> {
+  if (kind === 'explore') return { ...explorePermission };
+  return { ...(overrides ?? {}), question: 'deny', task: 'deny' };
+}
 
 function supportedVersion(value: unknown): value is string {
   if (typeof value !== 'string') return false;
@@ -49,11 +60,11 @@ export class OpenCodeAdapter implements ShipAdapter {
 
   async validate(profile: Profile, media: string[]): Promise<void> {
     if (!isOpenCodeProfile(profile)) throw new Error('OpenCode adapter requires an OpenCode profile');
-    if (Object.keys(profile.options).some(key => !['variant','shell'].includes(key))) throw new Error('OpenCode profile has unsupported options');
+    if (Object.keys(profile.options).some(key => !['variant','shell','permission'].includes(key))) throw new Error('OpenCode profile has unsupported options');
     if(profile.options.shell&&(typeof profile.options.shell!=='string'||!isAbsolute(profile.options.shell)))throw new Error('OpenCode shell must be an absolute executable path');
+    for(const [name,action] of Object.entries(profile.options.permission??{})){if(!['allow','ask','deny'].includes(action))throw new Error(`OpenCode permission for '${name}' must be allow, ask, or deny`);}
     if (media.some(type => type !== 'image/png' && type !== 'image/jpeg')) throw new Error('OpenCode media support is verified only for PNG/JPEG images');
-    const [provider, model] = splitModel(profile.model);
-    if (!provider || !model) throw new Error('Profile model must be provider/model');
+    if (profile.model !== 'default') splitModel(profile.model);
     if (profile.executable) {
       if (!isAbsolute(profile.executable)) throw new Error('OpenCode executable must be an absolute path');
       if (!process.env.OPENCODE_BIN) this.executable = profile.executable;
@@ -104,21 +115,22 @@ export class OpenCodeAdapter implements ShipAdapter {
     this.workspace=workspace;this.activityKind=kind;
     const port = await this.availablePort();
     this.password = randomBytes(32).toString('hex');
-    const [providerID, modelID] = splitModel(profile.model);
+    const explicitModel = profile.model === 'default' ? undefined : splitModel(profile.model);
     const callbackCli = fileURLToPath(new URL('../callback-cli.js', import.meta.url));
-    const deny = { '*': 'deny', read: 'allow', glob: 'allow', grep: 'allow', specship_callbacks_ask_spec: 'allow', specship_callbacks_report_result: 'allow' };
     const skill=await readFile(fileURLToPath(new URL('../../.agents/skills/ship/SKILL.md',import.meta.url)),'utf8');
     const shipPrompt=skill.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'')+`\nThis is a runner-associated assignment. Callback tools ask_spec and report_result are available. Submit the structured result through report_result before finishing. Routine command/path failures should be investigated within scope; a Node runtime is available at ${JSON.stringify(process.execPath)} if node is missing from PATH. PowerShell requires the & call operator before a quoted executable path.\n`;
     const config = {
       ...(profile.options.shell?{shell:profile.options.shell}:{}),
       agent: {
         specship_ship: {
-          description: 'Specship implementation agent', mode: 'primary', model: profile.model,
+          description: 'Specship implementation agent', mode: 'primary', ...(explicitModel ? { model: profile.model } : {}),
           ...(profile.options.variant ? { variant: profile.options.variant } : {}),
-          permission:kind==='explore'?deny:{question:'deny',task:'deny'}, prompt: shipPrompt,
+          permission:shipPermissionPolicy(kind,profile.options.permission), prompt: shipPrompt,
         },
       },
-      provider: { [providerID]: { models: { [modelID]: { options: profile.options.variant ? { reasoningEffort: profile.options.variant } : {} } } } },
+      ...(explicitModel ? {
+        provider: { [explicitModel[0]]: { models: { [explicitModel[1]]: { options: profile.options.variant ? { reasoningEffort: profile.options.variant } : {} } } } },
+      } : {}),
       mcp: { specship_callbacks: {
         type: 'local', enabled: true, ...(callback.timeoutMs?{timeout:callback.timeoutMs}:{}), command: [process.execPath, callbackCli],
         environment: callback.descriptorPath ? { SPECSHIP_CALLBACK_DESCRIPTOR: callback.descriptorPath } : { SPECSHIP_CALLBACK_URL: callback.url, SPECSHIP_CALLBACK_CAPABILITY: callback.capability },
@@ -162,7 +174,34 @@ export class OpenCodeAdapter implements ShipAdapter {
     this.profile = profile;
   }
 
-  async start(workspace: string, profile: Profile, kind: 'explore' | 'implement' | 'correct', callback: { url: string; capability: string; descriptorPath?:string;timeoutMs?:number }): Promise<{ session: string; version: string }> {
+  private async defaultModel(): Promise<string> {
+    const config = await this.request('/config');
+    if (config.model !== undefined) {
+      if (typeof config.model !== 'string') throw new Error('OpenCode default model must be provider/model');
+      splitModel(config.model);
+      return config.model;
+    }
+    // Match OpenCode's Provider.defaultModel: configured model, valid recent
+    // model, then the first configured/connected provider's preferred model.
+    const available = await this.request('/config/providers');
+    if (!Array.isArray(available.providers)) throw new Error('OpenCode did not return connected providers for default model selection');
+    const paths = await this.request('/path');
+    if (typeof paths.state !== 'string' || !isAbsolute(paths.state)) throw new Error('OpenCode did not return an absolute state directory for default model selection');
+    let recent: unknown;
+    try { recent = JSON.parse(await readFile(join(paths.state, 'model.json'), 'utf8')).recent; }
+    catch { /* OpenCode also ignores missing or unreadable recent-model state. */ }
+    for (const entry of Array.isArray(recent) ? recent : []) {
+      if (typeof entry?.providerID !== 'string' || typeof entry?.modelID !== 'string') continue;
+      if (available.providers.some((provider: any) => provider.id === entry.providerID && Object.hasOwn(provider.models ?? {}, entry.modelID))) return `${entry.providerID}/${entry.modelID}`;
+    }
+    const configured = Object.keys(config.provider ?? {});
+    const provider = available.providers.find((item: any) => !configured.length || configured.includes(item.id));
+    const model = provider && available.default?.[provider.id];
+    if (typeof model !== 'string' || !Object.hasOwn(provider.models ?? {}, model)) throw new Error('OpenCode has no available default model; configure a model in OpenCode or select an explicit Specship model');
+    return `${provider.id}/${model}`;
+  }
+
+  async start(workspace: string, profile: Profile, kind: 'explore' | 'implement' | 'correct', callback: { url: string; capability: string; descriptorPath?:string;timeoutMs?:number }): Promise<{ session: string; version: string; profile?: OpenCodeProfile }> {
     if (!isOpenCodeProfile(profile)) throw new Error('OpenCode adapter requires an OpenCode profile');
     const alreadyOwned = Boolean(this.child);
     try {
@@ -170,10 +209,11 @@ export class OpenCodeAdapter implements ShipAdapter {
         this.address = this.testEndpoint.address;
         this.password = this.testEndpoint.password;
       } else if (!this.child) await this.startServer(workspace, profile, kind, callback);
-      else if (JSON.stringify(this.profile) !== JSON.stringify(profile)) throw new Error('A running OpenCode server cannot change the pinned Ship profile');
-      if (!this.profile || JSON.stringify(this.profile) !== JSON.stringify(profile)) await this.validateLiveProfile(profile);
+      const resolved = profile.model === 'default' ? { ...profile, model: this.profile?.model ?? await this.defaultModel() } : profile;
+      if (alreadyOwned && JSON.stringify(this.profile) !== JSON.stringify(resolved)) throw new Error('A running OpenCode server cannot change the pinned Ship profile');
+      if (!this.profile || JSON.stringify(this.profile) !== JSON.stringify(resolved)) await this.validateLiveProfile(resolved);
       const session = await this.request('/session', { title: `Specship ${kind}` });
-      return { session: session.id, version: this.version };
+      return { session: session.id, version: this.version, profile: this.profile };
     } catch (error) {
       if (!alreadyOwned) {
         const child = this.child;
@@ -323,15 +363,19 @@ export class OpenCodeAdapter implements ShipAdapter {
   }
 
   async abort(session: string): Promise<boolean> {
-    try {
-      await this.request(`/session/${encodeURIComponent(session)}/abort`, {});
-      const deadline = Date.now() + this.stopTimeoutMs;
-      while (Date.now() < deadline) {
-        if (await this.isIdle(session)) {this.stoppedSessions.add(session);return true;}
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-      return false;
-    } catch { return false; }
+    try { await this.request(`/session/${encodeURIComponent(session)}/abort`, {}); }
+    catch {
+      // A session the server no longer tracks is stopped, not stuck; any other failure is unknown.
+      if (!await this.isIdle(session).catch(() => false)) return false;
+      this.stoppedSessions.add(session);
+      return true;
+    }
+    const deadline = Date.now() + this.stopTimeoutMs;
+    while (Date.now() < deadline) {
+      if (await this.isIdle(session)) {this.stoppedSessions.add(session);return true;}
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return false;
   }
 
   async reply(session: string, operationId:string, answer: string, artifacts: Array<{ mime: string; name: string; data: Buffer }>): Promise<void> {
@@ -388,8 +432,9 @@ export class OpenCodeAdapter implements ShipAdapter {
       const timer = setTimeout(() => finish(false), Math.min(this.stopTimeoutMs, 10_000));
       child.once('exit', onExit);
       child.once('error', onError);
-      try { if (!child.kill()) finish(false); }
-      catch { finish(false); }
+      // A refused signal usually means the process already exited; only a real exit confirms it.
+      try { if (!child.kill()) finish(child.exitCode !== null || child.signalCode !== null); }
+      catch { finish(child.exitCode !== null || child.signalCode !== null); }
     });
   }
 

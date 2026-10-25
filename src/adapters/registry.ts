@@ -33,7 +33,7 @@ export class HarnessRegistry implements ShipAdapter {
 
   async validate(profile: Profile, media: string[]): Promise<void> { await this.adapterFor(profile).validate(profile, media); }
 
-  async start(workspace: string, profile: Profile, kind: 'explore' | 'implement' | 'correct', callback: { url: string; capability: string; descriptorPath?: string; timeoutMs?: number }): Promise<{ session: string; version: string }> {
+  async start(workspace: string, profile: Profile, kind: 'explore' | 'implement' | 'correct', callback: { url: string; capability: string; descriptorPath?: string; timeoutMs?: number }): Promise<{ session: string; version: string; profile?: Profile }> {
     const adapter = this.adapterFor(profile);
     const started = await adapter.start(workspace, profile, kind, callback);
     this.owners.set(started.session, adapter);

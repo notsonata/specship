@@ -3,18 +3,40 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { EventEmitter, once } from 'node:events';
 import { spawn } from 'node:child_process';
-import { OpenCodeAdapter } from '../../dist/adapters/opencode.js';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { OpenCodeAdapter, shipPermissionPolicy } from '../../dist/adapters/opencode.js';
 
 const profile={harness:'opencode',model:'openai/gpt-6-luna',options:{variant:'high'}};
-async function fakeOpenCode(t,version='1.18.30'){
-  const sessions=new Map(),streams=new Set();let promptRequests=0,ambiguous=false,lastPrompt;
+
+test('ship permission policy pins Specship routing while a profile may answer path prompts',()=>{
+  assert.deepEqual(shipPermissionPolicy('implement'),{question:'deny',task:'deny'});
+  assert.deepEqual(shipPermissionPolicy('implement',{external_directory:'allow',webfetch:'deny'}),{external_directory:'allow',webfetch:'deny',question:'deny',task:'deny'});
+  assert.deepEqual(shipPermissionPolicy('correct',{question:'allow',task:'allow'}),{question:'deny',task:'deny'});
+  assert.deepEqual(shipPermissionPolicy('explore',{external_directory:'allow'}),{'*':'deny',read:'allow',glob:'allow',grep:'allow',specship_callbacks_ask_spec:'allow',specship_callbacks_report_result:'allow'});
+});
+
+test('OpenCode profile validation accepts a permission policy and rejects unknown actions',async()=>{
+  const adapter=new OpenCodeAdapter('not-spawned');
+  await adapter.validate({...profile,options:{...profile.options,permission:{external_directory:'allow'}}},[]);
+  await assert.rejects(adapter.validate({...profile,options:{...profile.options,permission:{external_directory:'sometimes'}}},[]),/must be allow, ask, or deny/);
+  await assert.rejects(adapter.validate({...profile,options:{...profile.options,retry:'allow'}},[]),/unsupported options/);
+});
+async function fakeOpenCode(t,version='1.18.30',options={}){
+  const sessions=new Map(),streams=new Set();let promptRequests=0,ambiguous=false,lastPrompt,configRequests=0;
+  const model={capabilities:{input:{image:true}},variants:{high:{reasoningEffort:'high'}}};
+  const providers=options.providers??[{id:'openai',models:{'gpt-6-luna':model}}];
   const server=createServer(async(req,res)=>{
     if(req.headers.authorization!==`Basic ${Buffer.from('opencode:test-password').toString('base64')}`){res.writeHead(401).end();return;}
     const url=new URL(req.url,'http://127.0.0.1');const parts=url.pathname.split('/').filter(Boolean);
     if(url.pathname==='/global/health'){res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({version}));return;}
+    if(url.pathname==='/config'){configRequests++;res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify(options.config??{model:'openai/gpt-6-luna'}));return;}
+    if(url.pathname==='/config/providers'){res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({providers,default:{openai:'gpt-6-luna'}}));return;}
+    if(url.pathname==='/path'){res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({state:options.state}));return;}
     if(url.pathname==='/permission/p1/reply'&&req.method==='POST'){let raw='';for await(const chunk of req)raw+=chunk;assert.deepEqual(JSON.parse(raw),{reply:'once'});res.writeHead(200).end('true');return;}
     if(url.pathname===`/api/session/${[...sessions.keys()][0]}/permission/p2/reply`&&req.method==='POST'){let raw='';for await(const chunk of req)raw+=chunk;assert.deepEqual(JSON.parse(raw),{reply:'reject'});res.writeHead(204).end();return;}
-    if(url.pathname==='/provider'){res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({all:[{id:'openai',models:{'gpt-6-luna':{capabilities:{input:{image:true}},variants:{high:{reasoningEffort:'high'}}}}}]}));return;}
+    if(url.pathname==='/provider'){res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({all:providers}));return;}
     if(url.pathname==='/session'&&req.method==='POST'){const id='01a149b7-8297-7002-9918-ccb79cff880c';sessions.set(id,{messages:[],status:'busy'});res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({id}));return;}
     if(url.pathname==='/event'){res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache'});res.flushHeaders();streams.add(res);req.on('close',()=>streams.delete(res));return;}
     if(url.pathname==='/session/status'){res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify(Object.fromEntries([...sessions].filter(([,s])=>s.status!=='idle').map(([id,s])=>[id,{type:s.status}]))));return;}
@@ -23,7 +45,7 @@ async function fakeOpenCode(t,version='1.18.30'){
     if(parts[0]==='session'&&parts[2]==='prompt_async'&&req.method==='POST'){
       let raw='';for await(const chunk of req)raw+=chunk;lastPrompt=JSON.parse(raw);promptRequests++;
       const s=sessions.get(parts[1]);const text=lastPrompt.parts.find(x=>x.type==='text').text;
-      assert.equal(lastPrompt.agent,'specship_ship');assert.deepEqual(lastPrompt.model,{providerID:'openai',modelID:'gpt-6-luna'});assert.equal(lastPrompt.variant,'high');
+      assert.equal(lastPrompt.agent,'specship_ship');assert.deepEqual(lastPrompt.model,options.expectedModel??{providerID:'openai',modelID:'gpt-6-luna'});assert.equal(lastPrompt.variant,(options.profile??profile).options.variant);
       assert.match(text,/\[specship-operation:operation with spaces\]/);
       assert.equal(Object.hasOwn(lastPrompt,'messageID'),false);
       s.messages.push({info:{id:'01a149b7-8297-7002-9918-ccb79cff880d',role:'user',sessionID:parts[1]},parts:[{type:'text',text}]});
@@ -36,9 +58,56 @@ async function fakeOpenCode(t,version='1.18.30'){
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const address=`http://127.0.0.1:${server.address().port}`;
   t.after(async()=>{for(const stream of streams)stream.end();await new Promise(resolve=>server.close(resolve));});
   const adapter=new OpenCodeAdapter('not-spawned',150,{address,password:'test-password'});
-  await adapter.validate(profile,['image/png']);const session=await adapter.start(process.cwd(),profile,'implement',{url:'http://127.0.0.1:1',capability:'cap'});
-  return {adapter,session:session.session,sessions,streams,endpoint:{address,password:'test-password'},setAmbiguous:value=>ambiguous=value,get promptRequests(){return promptRequests;},get lastPrompt(){return lastPrompt;}};
+  const selected=options.profile??profile;
+  await adapter.validate(selected,['image/png']);const session=await adapter.start(process.cwd(),selected,'implement',{url:'http://127.0.0.1:1',capability:'cap'});
+  return {adapter,session:session.session,resolvedProfile:session.profile,sessions,streams,endpoint:{address,password:'test-password'},setAmbiguous:value=>ambiguous=value,get promptRequests(){return promptRequests;},get configRequests(){return configRequests;},get lastPrompt(){return lastPrompt;}};
 }
+
+test('OpenCode default resolves before submission and stays pinned in prompts and reconnect snapshots',async t=>{
+  const options={profile:{...profile,model:'default'},config:{model:'openai/gpt-6-luna'}};
+  const f=await fakeOpenCode(t,'1.18.30',options);
+  assert.equal(f.promptRequests,0);assert.deepEqual(f.resolvedProfile,profile);assert.equal(f.configRequests,1);
+  const snapshot=await f.adapter.snapshot(f.session);assert.equal(snapshot.profile.model,profile.model);
+  options.config.model='changed/unavailable';
+  const restored=new OpenCodeAdapter('not-spawned',150);await restored.restore(snapshot,{url:'http://127.0.0.1:1',capability:'cap'});
+  const controller=new AbortController();t.after(()=>controller.abort());await restored.subscribe(f.session,controller.signal);
+  await restored.submit(f.session,'operation with spaces','work',[]);
+  assert.equal(f.configRequests,1);assert.deepEqual(f.lastPrompt.model,{providerID:'openai',modelID:'gpt-6-luna'});
+});
+
+test('explicit OpenCode profiles bypass default resolution',async t=>{
+  const f=await fakeOpenCode(t,'1.18.30',{config:{model:'unavailable/default'}});
+  assert.equal(f.configRequests,0);assert.deepEqual(f.resolvedProfile,profile);
+});
+
+test('a new run resolves changed OpenCode defaults and an omitted variant stays inherited',async t=>{
+  const options={profile:{harness:'opencode',model:'default',options:{}},config:{model:'openai/gpt-6-luna'}};
+  const first=await fakeOpenCode(t,'1.18.30',options);assert.equal(first.resolvedProfile.model,profile.model);
+  options.config.model='another/model';options.providers=[{id:'another',models:{model:{capabilities:{input:{image:true}}}}}];options.expectedModel={providerID:'another',modelID:'model'};
+  const next=await fakeOpenCode(t,'1.18.30',options);assert.equal(next.resolvedProfile.model,'another/model');
+  const controller=new AbortController();t.after(()=>controller.abort());await next.adapter.subscribe(next.session,controller.signal);
+  await next.adapter.submit(next.session,'operation with spaces','work',[]);assert.equal(Object.hasOwn(next.lastPrompt,'variant'),false);
+});
+
+test('OpenCode default checks recent models before the connected provider fallback',async t=>{
+  const state=await mkdtemp(join(tmpdir(),'specship-opencode-model-'));t.after(()=>rm(state,{recursive:true,force:true}));
+  const options={profile:{...profile,model:'default'},config:{provider:{unavailable:{}}},state};
+  await writeFile(join(state,'model.json'),JSON.stringify({recent:[null,{providerID:'missing',modelID:'missing'},{providerID:'openai',modelID:'gpt-6-luna'}]}));
+  const recent=await fakeOpenCode(t,'1.18.30',options);assert.equal(recent.resolvedProfile.model,profile.model);assert.equal(recent.promptRequests,0);
+  options.config={};await writeFile(join(state,'model.json'),'invalid json');
+  const fallback=await fakeOpenCode(t,'1.18.30',options);assert.equal(fallback.resolvedProfile.model,profile.model);assert.equal(fallback.promptRequests,0);
+  options.providers=[];await assert.rejects(fakeOpenCode(t,'1.18.30',options),/no available default model/);
+});
+
+test('OpenCode default fails before creating a session when selection or capabilities are invalid',async t=>{
+  for(const options of [
+    {config:{model:'invalid'}},
+    {config:{model:'missing/model'}},
+    {config:{},state:'relative/state'},
+    {config:{model:'openai/gpt-6-luna'},providers:[{id:'openai',models:{'gpt-6-luna':{capabilities:{input:{image:false}}}}}]},
+    {config:{model:'openai/gpt-6-luna'},providers:[{id:'openai',models:{'gpt-6-luna':{capabilities:{input:{image:true}},variants:{}}}}]},
+  ])await assert.rejects(fakeOpenCode(t,'1.18.30',{...options,profile:{...profile,model:'default'}}),/provider\/model|unavailable|absolute state|image input/);
+});
 
 test('OpenCode accepts the minimum and newer semantic versions and rejects older or invalid versions',async t=>{
   for(const version of ['1.18.30','1.18.30+build.1','1.18.31','1.18.31-beta.1','1.19.0','1.100.0','2.0.0']){

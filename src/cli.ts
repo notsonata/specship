@@ -114,18 +114,20 @@ async function setup(args: string[]): Promise<void> {
   const selectModel = options.get('select-model') === 'true';
   const max = options.has('max-dispatch-seconds') ? Number(options.get('max-dispatch-seconds')) : null;
   const margin = Number(options.get('delivery-margin-seconds') ?? DEFAULT_DELIVERY_MARGIN_SECONDS);
-  const variant = options.get('variant');
   const shipShell=options.get('shell');
   const harness=options.get('harness') ?? 'opencode';
+  const variant = options.get('variant') ?? (harness === 'opencode' ? 'high' : undefined);
   const cliOption=options.get('cli');
   const sandbox=options.get('sandbox');
   const isolation=options.get('isolation');
   if (!profileName || !executable || !isAbsolute(executable) || max !== null && (!Number.isSafeInteger(max) || max < 1) || !Number.isSafeInteger(margin) || margin < 1 || isolation && !['shared','worktree'].includes(isolation)) {
-    throw new Error('setup requires --profile NAME --executable ABSOLUTE_PATH and either --model provider/model or --select-model true; optional --harness opencode|deepseek --max-dispatch-seconds N --delivery-margin-seconds N --variant VALUE --shell ABSOLUTE_PATH --cli ABSOLUTE_PATH --sandbox workspace-write|danger-full-access --isolation shared|worktree');
+    throw new Error('setup requires --profile NAME --executable ABSOLUTE_PATH; OpenCode defaults to --model default --variant high; optional --model provider/model --select-model true --harness opencode|deepseek --max-dispatch-seconds N --delivery-margin-seconds N --variant VALUE --shell ABSOLUTE_PATH --cli ABSOLUTE_PATH --sandbox workspace-write|danger-full-access --isolation shared|worktree');
   }
   if (selectModel && harness !== 'opencode') throw new Error('--select-model is available for the opencode harness; pass --model explicitly for deepseek');
+  if (selectModel && model === 'default') throw new Error('Choose either --model or --select-model true');
   if (!model && selectModel) model = await selectOpenCodeModel(executable);
-  if (!model || !/^[^/]+\/.+$/.test(model)) throw new Error('setup requires --model provider/model or --select-model true');
+  if (!model && harness === 'opencode') model = 'default';
+  if (!model || !(harness === 'opencode' && model === 'default') && !/^[^/]+\/.+$/.test(model)) throw new Error('setup requires --model provider/model, --model default (OpenCode), or --select-model true');
   let entry: any;
   if (harness === 'opencode') {
     if (variant && !['low','medium','high'].includes(variant)) throw new Error('OpenCode variant must be low, medium, or high');

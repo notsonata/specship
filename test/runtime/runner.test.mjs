@@ -36,6 +36,16 @@ async function fixture(t, max=5){const root=await mkdtemp(join(tmpdir(),'specshi
 
 test('valid profile configuration parses at the ship object and unknown model options are rejected',async t=>{const f=await fixture(t);assert.equal((await readConfig(join(f.root,'config.json'))).ship.default_profile,'luna');await writeFile(join(f.root,'bad.json'),JSON.stringify({ship:{default_profile:'missing',profiles:{luna:profile}},limits:{max_dispatch_seconds:1,delivery_margin_seconds:1}}));await assert.rejects(readConfig(join(f.root,'bad.json')));});
 
+test('OpenCode configuration defaults to the default model and high variant while preserving explicit selections',async t=>{
+  const f=await fixture(t);const file=join(f.root,'model-config.json');
+  const write=selected=>writeFile(file,JSON.stringify({ship:{default_profile:'chosen',profiles:{chosen:selected}}}));
+  await write({...profile,model:'default'});assert.equal((await readConfig(file)).ship.profiles.chosen.model,'default');
+  for(const selected of [{harness:'opencode'},{harness:'opencode',options:{}}]){await write(selected);assert.deepEqual((await readConfig(file)).ship.profiles.chosen,{harness:'opencode',model:'default',options:{variant:'high'}});}
+  await write({...profile,options:{variant:'low'}});assert.deepEqual((await readConfig(file)).ship.profiles.chosen,{...profile,options:{variant:'low'}});
+  await write({...profile,options:{variant:'high',permission:{external_directory:'allow',webfetch:'deny'}}});assert.deepEqual((await readConfig(file)).ship.profiles.chosen.options.permission,{external_directory:'allow',webfetch:'deny'});
+  for(const selected of [{...profile,model:'invalid'},{...profile,options:{variant:'invalid'}},{...profile,options:{permission:{external_directory:'sometimes'}}},{harness:'deepseek',model:'default',executable:process.execPath,options:{}},{harness:'deepseek',executable:process.execPath,options:{}}]){await write(selected);await assert.rejects(readConfig(file));}
+});
+
 test('missing limits, an omitted assignment cap, and null all default to no assignment deadline',async t=>{
   const f=await fixture(t);const ship={default_profile:'luna',profiles:{luna:profile}};
   for(const limits of [undefined,{}, {max_dispatch_seconds:null}, {delivery_margin_seconds:15}]){
@@ -78,18 +88,32 @@ test('dispatch -> durable question -> reply -> report -> independent accept',asy
 
 test('correction reuses the same active Ship session and callback hub',async t=>{const f=await fixture(t,30);const first=await f.runner.dispatch({operation_id:'first',kind:'implement',brief});const ready=await f.runner.reply({run_id:first.run_id,request_id:'q-first',operation_id:'answer-first',answer:'A',expected_brief_version:first.brief_version});assert.equal(ready.kind,'implementation_ready');const correction=await f.runner.dispatch({run_id:first.run_id,supervisor_handle:ready.supervisor_handle,operation_id:'correction',kind:'correct',corrections:['Fix demonstrated acceptance defect'],expected_brief_version:ready.brief_version});assert.equal(correction.kind,'decision_required');assert.equal(f.adapter.sessions.size,1);assert.equal(f.adapter.next,2);});
 
-test('failed server cleanup blocks acceptance without losing the report or attached session',async t=>{
+test('default model selection is persisted before submission and reused for corrections',async t=>{
+  const f=await fixture(t,30);f.runner.config.ship.profiles.luna={...profile,model:'default'};
+  const start=f.adapter.start.bind(f.adapter);let resolutions=0;
+  f.adapter.validate=async selected=>assert.ok(['default',profile.model].includes(selected.model));
+  f.adapter.start=async(workspace,selected,kind,callback)=>{assert.equal(selected.model,'default');resolutions++;return {...await start(workspace,profile,kind,callback),profile};};
+  const submit=f.adapter.submit.bind(f.adapter);
+  f.adapter.submit=async(...args)=>{const saved=await f.store.listRuns(0,10);assert.equal((await f.store.load(saved[0].run_id)).profile.model,profile.model);return submit(...args);};
+  const first=await f.runner.dispatch({operation_id:'default-first',kind:'implement',brief});
+  const ready=await f.runner.reply({run_id:first.run_id,request_id:'q-default-first',operation_id:'default-answer',answer:'A',expected_brief_version:first.brief_version});
+  const correction=await f.runner.dispatch({run_id:first.run_id,supervisor_handle:ready.supervisor_handle,operation_id:'default-correction',kind:'correct',corrections:['Fix the demonstrated defect'],expected_brief_version:ready.brief_version});
+  assert.equal(correction.kind,'decision_required');assert.equal(resolutions,1);assert.equal((await f.store.load(first.run_id)).profile.model,profile.model);
+});
+
+test('failed server cleanup does not discard an accepted result',async t=>{
   const f=await fixture(t,30);
   const question=await f.runner.dispatch({operation_id:'cleanup',kind:'implement',brief});
   const ready=await f.runner.reply({run_id:question.run_id,request_id:'q-cleanup',operation_id:'cleanup-answer',answer:'A',expected_brief_version:question.brief_version});
   let closed=false;f.adapter.close=async()=>closed;
-  await assert.rejects(f.runner.accept(ready.run_id,ready.activity_id,ready.report_id,ready.brief_version,'independently checked'),/could not be closed/);
-  const saved=await f.store.load(ready.run_id);
-  assert.equal(saved.lifecycle,'awaiting_review');assert.equal(saved.report_id,ready.report_id);assert.equal(saved.accepted,undefined);
-  await assert.rejects(f.runner.dispatch({operation_id:'competing',kind:'implement',brief}),/Workspace writer is owned/);
-  closed=true;
   await f.runner.accept(ready.run_id,ready.activity_id,ready.report_id,ready.brief_version,'independently checked');
-  assert.equal((await f.store.load(ready.run_id)).lifecycle,'completed');
+  const saved=await f.store.load(ready.run_id);
+  assert.equal(saved.lifecycle,'completed');
+  assert.equal(saved.accepted.evidence,'independently checked');
+  assert.equal(saved.cleanup_pending,true);
+  assert.equal(f.runner.active.has(ready.run_id),true);
+  closed=true;
+  assert.equal(await f.runner.disposeActive(ready.run_id,true),true);assert.equal(f.runner.active.has(ready.run_id),false);
 });
 
 test('a terminal run cannot be dispatched again',async t=>{

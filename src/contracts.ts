@@ -13,7 +13,8 @@ export type Report = z.infer<typeof Report>;
 export type EventKind = 'exploration_completed'|'decision_required'|'user_input_required'|'implementation_ready'|'execution_failed'|'paused'|'cancelled'|'limit_reached';
 export interface MaterialEvent { run_id: string; activity_id: string; event_id: string; brief_version: number; profile: string; supervisor_handle: string; report_id?: string; kind: EventKind; payload: unknown }
 export type ActivityKind = 'explore'|'implement'|'correct';
-export interface OpenCodeProfile { harness: 'opencode'; model: string; executable?: string; options: { variant?: 'low'|'medium'|'high'; shell?: string } }
+export type NativePermissionAction = 'allow' | 'ask' | 'deny';
+export interface OpenCodeProfile { harness: 'opencode'; model: string; executable?: string; options: { variant?: 'low'|'medium'|'high'; shell?: string; permission?: Record<string, NativePermissionAction> } }
 export interface DeepSeekProfile { harness: 'deepseek'; model: string; executable: string; options: { reasoning_effort?: 'off'|'low'|'high'|'max'; profile?: string; cli?: string; sandbox?: 'workspace-write'|'danger-full-access'; callbacks?: 'native'|'mcp' } }
 export type Profile = OpenCodeProfile | DeepSeekProfile;
 export function isOpenCodeProfile(profile: Profile): profile is OpenCodeProfile { return profile.harness === 'opencode'; }

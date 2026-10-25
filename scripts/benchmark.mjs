@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { arms, defaultArms, digest, selectCases, quotaDelta, summarize, trialEstimate, usesSpec, usesShip, usesOpenCodeShip, usesDshShip } from './benchmark/accounting.mjs';
 import { checkSubscriptions } from './benchmark/auth.mjs';
 import { recoverShipUsage, applyShipUsage } from './benchmark/usage.mjs';
+import { nonretryableProviderFailure, orderedArms } from './benchmark/safety.mjs';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const defaultHome = join(repository, '.specship', 'benchmark');
@@ -14,7 +15,7 @@ const options = {};
 for (let i = 0; i < argv.length; i++) {
   const key = argv[i];
   if (!key.startsWith('--') || key in options) throw Error(`Invalid option: ${key}`);
-  options[key] = ['--execute'].includes(key) ? true : argv[++i];
+  options[key] = ['--execute', '--finish'].includes(key) ? true : argv[++i];
   if (options[key] === undefined) throw Error(`Missing value: ${key}`);
 }
 const home = resolve(options['--home'] ?? defaultHome);
@@ -74,7 +75,7 @@ function imageFor(config, row) {
   return image;
 }
 function validateModels(config, selectedArms) {
-  const valid = (value, label) => { if (typeof value?.model !== 'string' || !value.model.trim() || /YOUR_|<|>/.test(value.model)) throw Error(`Set ${label}.model in ${join(home, 'config.json')}`); };
+  const valid = (value, label) => { if (typeof value?.model !== 'string' || !value.model.trim() || value.model === 'default' || /YOUR_|<|>/.test(value.model)) throw Error(`Set ${label}.model in ${join(home, 'config.json')}`); };
   if (selectedArms.some(usesSpec)) valid(config.spec, 'spec');
   if (selectedArms.some(usesOpenCodeShip)) valid(config.ship, 'ship');
   if (selectedArms.some(usesDshShip)) {
@@ -158,7 +159,11 @@ if (action === 'init') {
   const cases = options['--case'] ? lock.cases.filter(c => c.instance_id === options['--case']) : lock.cases;
   if (!cases.length) throw Error('No matching case');
   const plan = { cases: cases.map(c => ({ instance_id: c.instance_id, image: imageFor(config, c) })), arms: selectedArms, repetitions: config.repetitions, attempts: cases.length * selectedArms.length * config.repetitions, timeout_seconds: config.timeout_seconds, models: { spec: config.spec.model, ship: config.ship.model, dsh: config.dsh?.model ?? null }, prices_configured: Boolean(config.spec.rates), paid_calls_enabled: action === 'run' && options['--execute'] === true };
+  plan.efforts = { spec: config.spec.effort, ship: config.ship.effort };
+  plan.ordering = config.ship_first ? 'First planned Ship trial before any coordinator; remaining arms rotate normally' : 'Rotate arms across cases/repeats';
+  plan.trials = cases.flatMap((row, index) => Array.from({ length: config.repetitions }, (_, repeat) => orderedArms(selectedArms, index, repeat, config.ship_first).map(arm => ({ instance_id: row.instance_id, arm, repetition: repeat })))).flat();
   plan.authentication = config.auth?.mode ?? 'api';
+  plan.finish_after_run = options['--finish'] === true;
   if (action === 'build' || action === 'preflight') {
     for (const row of cases) {
       const built = await buildImage(config, row);
@@ -182,18 +187,22 @@ if (action === 'init') {
     const runRoot = join(home, 'runs', runId);await mkdir(runRoot, { recursive: true });
     const revision = await processCommand('git', ['rev-parse', 'HEAD'], { capture: true });
     const dirty = await processCommand('git', ['status', '--porcelain'], { capture: true });
-    await save(join(runRoot, 'manifest.json'), { run_id: runId, dataset_hash: lock.sha256, configuration: config, git_revision: revision.trim(), working_tree_dirty: Boolean(dirty), plan });
-    for (const row of cases) {
+    const manifest = { run_id: runId, dataset_hash: lock.sha256, configuration: config, git_revision: revision.trim(), working_tree_dirty: Boolean(dirty), plan };
+    await save(join(runRoot, 'manifest.json'), manifest);
+    const progress = { run_id: runId, planned_attempts: plan.attempts, completed_attempts: 0 };
+    const recordProgress = async update => { Object.assign(progress, update, { updated_at: new Date().toISOString() });await save(join(runRoot, 'progress.json'), progress); };
+    await recordProgress({ phase: 'running', current_trial: null });
+    trials: for (const row of cases) {
       const built = await buildImage(config, row);
       for (let repeat = 0; repeat < config.repetitions; repeat++) {
         // Rotate arm order across cases/repeats to reduce systematic ordering bias.
-        const rotation = (cases.indexOf(row) + repeat) % selectedArms.length;
-        const order = [...selectedArms.slice(rotation), ...selectedArms.slice(0, rotation)];
+        const order = orderedArms(selectedArms, cases.indexOf(row), repeat, config.ship_first);
         for (const arm of order) {
           const trialRoot = join(runRoot, `${row.instance_id}--${arm}--${repeat}`);await mkdir(trialRoot);
           const name = `specship-bench-${randomUUID()}`;
           ownedContainers.set(name, config.docker);
           const task = { instance_id: row.instance_id, base_commit: row.base_commit, problem_statement: row.problem_statement, arm, spec: config.spec, ship: usesDshShip(arm) ? config.dsh : config.ship, auth_mode: plan.authentication, timeout_seconds: config.timeout_seconds };
+          await recordProgress({ current_trial: basename(trialRoot) });
           console.log(`${runId}: ${row.instance_id} / ${arm} / ${repeat + 1}`);
           let failure, shipEvidence, usageError, stopped = false;
           const trialStarted = Date.now();
@@ -227,10 +236,40 @@ if (action === 'init') {
           Object.assign(result, trialEstimate(result, config));
           result.image_id = built.imageId;result.repetition = repeat;result.run_id = runId;
           await save(join(trialRoot, 'result.json'), result);
+          progress.completed_attempts++;
+          await recordProgress({ current_trial: null });
+          const eventText = await readFile(join(trialRoot, 'events.jsonl'), 'utf8').catch(() => '');
+          const errors = eventText.split(/\r?\n/).filter(Boolean).flatMap(line => {
+            try { const event = JSON.parse(line);return ['error', 'turn.failed'].includes(event.type) ? [event] : []; } catch { return []; }
+          });
+          if (nonretryableProviderFailure([result.error, result.controller_error, errors])) {
+            manifest.stopped = { at: new Date().toISOString(), trial: basename(trialRoot), reason: 'Nonretryable authentication, provider, or credit failure; remaining paid attempts were not started' };
+            await save(join(runRoot, 'manifest.json'), manifest);
+            console.error(`STOPPED: ${manifest.stopped.reason}. Evidence: ${trialRoot}`);
+            process.exitCode = 1;
+            break trials;
+          }
         }
       }
     }
-    console.log(`Run saved: ${runRoot}\nNext: npm run benchmark -- grade --run ${runId}`);
+    await recordProgress({ phase: manifest.stopped ? 'stopped' : 'run_complete', current_trial: null });
+    console.log(`Run saved: ${runRoot}`);
+    if (plan.finish_after_run) {
+      // Model-free evaluation/reporting stays in the controller, without a
+      // supervisor chat discovering the run ID or coordinating each stage.
+      await recordProgress({ phase: 'grading' });
+      const args = ['--run', runId, '--home', home, '--dotenv', envFile];
+      let gradingError;
+      try {
+        const output = await processCommand(process.execPath, [fileURLToPath(import.meta.url), 'grade', ...args], { capture: true, timeout: Math.min(2_147_000_000, plan.attempts * 2_200_000 + 120_000) });
+        await writeFile(join(runRoot, 'grade.log'), output);
+      } catch (error) { gradingError = error.message;await writeFile(join(runRoot, 'grade.log'), `${gradingError}\n`); }
+      const output = await processCommand(process.execPath, [fileURLToPath(import.meta.url), 'report', ...args], { capture: true });
+      await writeFile(join(runRoot, 'report.log'), output);
+      await recordProgress({ phase: gradingError ? 'grading_failed' : manifest.stopped ? 'stopped' : 'complete', grading_error: gradingError ?? null });
+      console.log(output);
+      if (gradingError) { console.error(gradingError);process.exitCode = 1; }
+    } else console.log(`Next: node scripts/benchmark.mjs grade --run ${runId} --home ${home}`);
   }
 } else if (action === 'controls') {
   const config = await configuration(), lock = await frozen();
@@ -263,6 +302,7 @@ if (action === 'init') {
       const result = await json(join(trialDir, 'result.json'));
       let patch = '';try { patch = await readFile(join(trialDir, 'patch.diff'), 'utf8'); } catch { /* no prediction produced */ }
       try {
+        if (!patch.trim()) throw Error('No nonempty patch to grade; SWE-bench skips empty predictions. Resolution remains unknown.');
         Object.assign(result, await gradePatch(config, datasetPath, evalRoot, result.instance_id, result.arm, patch));
         result.grading_error = null;
       } catch (error) { result.resolved = null;result.grading_error = error.message; }
@@ -307,5 +347,5 @@ if (action === 'init') {
     catch (error) { console.log(`${name}: unavailable (${error.message})`);process.exitCode = 1; }
   }
 } else {
-  console.log('Benchmark: init | fetch | doctor | plan | controls [--case ID] | build [--case ID] | preflight [--case ID] | run [--execute] [--arm codex|ship|specship] [--case ID] | grade --run ID | report --run ID\nAll commands accept --home PATH. Model execution requires run --execute.');
+  console.log('Benchmark: init | fetch | doctor | plan | controls [--case ID] | build [--case ID] | preflight [--case ID] | run [--execute] [--finish] [--arm codex|ship|specship] [--case ID] | grade --run ID | report --run ID\nAll commands accept --home PATH. Model execution requires run --execute. --finish grades and reports the same run automatically.');
 }

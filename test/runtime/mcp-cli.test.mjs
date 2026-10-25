@@ -36,8 +36,8 @@ async function installRuntime(workspace) {
   return join(root,'dist','cli.js');
 }
 
-async function invokeSetup(script, workspace, extra=[]) {
-  const args=[script,'setup','--workspace',workspace,'--profile','chosen','--model','openai/gpt-6-luna','--executable',process.execPath,...extra];
+async function invokeSetup(script, workspace, extra=[], model='openai/gpt-6-luna') {
+  const args=[script,'setup','--workspace',workspace,'--profile','chosen',...(model?['--model',model]:[]),'--executable',process.execPath,...extra];
   const child=spawn(process.execPath,args,{stdio:['ignore','pipe','pipe']});let out='',err='';child.stdout.on('data',x=>out+=x);child.stderr.on('data',x=>err+=x);
   const code=await new Promise(resolve=>child.on('close',resolve));return {code,out,err};
 }
@@ -54,6 +54,24 @@ test('CLI setup defaults to no assignment limit and emits one long direct MCP wa
   const {code,out,err}=await invokeSetup(installed,workspace);assert.equal(code,0,err);
   const result=JSON.parse(out);assert.match(result.codex_toml,new RegExp(`tool_timeout_sec = ${LONG_TOOL_TIMEOUT_SECONDS}`));assert.match(result.codex_toml,/direct_only_tool_namespaces = \["mcp__specship"\]/);
   const config=JSON.parse(await readFile(join(workspace,'.specship','config.json'),'utf8'));assert.equal(config.limits.max_dispatch_seconds,null);assert.equal(config.limits.delivery_margin_seconds,120);
+});
+
+test('CLI setup defaults to the OpenCode default model and high variant and preserves that choice on repeated setup',async t=>{
+  const workspace=await temp(t,'specship-setup-default-model-');const installed=await installRuntime(workspace);
+  const setup=await invokeSetup(installed,workspace,[],null);assert.equal(setup.code,0,setup.err);
+  const configPath=join(workspace,'.specship','config.json');const before=await readFile(configPath);
+  assert.equal(JSON.parse(before).ship.profiles.chosen.model,'default');
+  assert.equal(JSON.parse(before).ship.profiles.chosen.options.variant,'high');
+  const repeated=await invokeSetup(installed,workspace,[],'default');assert.equal(repeated.code,0,repeated.err);assert.deepEqual(await readFile(configPath),before);
+  const conflict=await invokeSetup(installed,workspace,['--select-model','true'],'default');assert.notEqual(conflict.code,0);assert.match(conflict.err,/either --model or --select-model/);
+  const deepseek=await invokeSetup(installed,workspace,['--harness','deepseek'],'default');assert.notEqual(deepseek.code,0);assert.match(deepseek.err,/provider\/model/);
+});
+
+test('CLI setup preserves explicit OpenCode model and variant overrides',async t=>{
+  const workspace=await temp(t,'specship-setup-model-override-');const installed=await installRuntime(workspace);
+  const setup=await invokeSetup(installed,workspace,['--variant','low']);assert.equal(setup.code,0,setup.err);
+  const selected=JSON.parse(await readFile(join(workspace,'.specship','config.json'),'utf8')).ship.profiles.chosen;
+  assert.equal(selected.model,'openai/gpt-6-luna');assert.equal(selected.options.variant,'low');
 });
 
 test('local runtime registration works and setup preserves existing runs and reconnect data byte for byte',async t=>{

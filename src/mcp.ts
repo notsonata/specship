@@ -29,7 +29,7 @@ async function owned(runner: Runner, runId: string, handle: string, extra: any):
 export async function serveSpec(runner: Runner, store: Store): Promise<void> {
   const server = new McpServer({ name: 'specship', version: '1.0.0' });
   server.registerTool('specship_dispatch', {
-    description: 'Dispatch one bounded Ship activity and block for one material event.',
+    description: 'Delegate investigation, coding, and tests to Ship with a compact brief; block until a result or consequential blocker. No polling or parallel supervisor work is needed.',
     inputSchema: {
       workspace: z.string(), operation_id: z.string().min(1), run_id: z.string().optional(),
       kind: z.enum(['explore', 'implement', 'correct']), ship_profile: z.string().optional(),
@@ -55,7 +55,7 @@ export async function serveSpec(runner: Runner, store: Store): Promise<void> {
     return output(await runner.wait(args.run_id,args.supervisor_handle,caller(extra),extra.signal,args.last_event_id,false));
   }));
   server.registerTool('specship_inspect', {
-    description: 'Inspect a bounded explicit section or list recovery candidates; not status polling.',
+    description: 'Inspect evidence missing from the delivered event or list recovery candidates. The result event already contains the report and check summary; do not fetch them again or poll status.',
     inputSchema: { workspace: z.string(), run_id: z.string().optional(), section: z.enum(['brief', 'evidence', 'artifacts', 'profiles', 'logs', 'transitions', 'recovery']), purpose: z.enum(['review', 'recovery', 'decision']).optional(), offset: z.number().int().nonnegative().optional(), limit: z.number().int().positive().max(100).optional() },
   }, guarded(async args => {
     workspaceMatches(args.workspace, store.workspace);
@@ -83,7 +83,7 @@ export async function serveSpec(runner: Runner, store: Store): Promise<void> {
     inputSchema: { run_id: z.string(), operation_id: z.string(), action: z.enum(['pause', 'resume', 'cancel']), reason: z.string(), supervisor_handle: z.string() },
   }, guarded(async (args, extra) => { await owned(runner, args.run_id, args.supervisor_handle, extra); return output(await runner.control(args as any, caller(extra), extra.signal)); }));
   server.registerTool('specship_accept', {
-    description: 'Accept the exact idle report after checking the original requirements, semantic assumptions, and independent validation. Passing implementation-coupled tests alone is insufficient.',
+    description: 'Accept the exact idle report after one focused review against the original request and actual changes. Use delivered criterion evidence and runner checks; do not routinely rerun Ship tests. Unresolved defects or missing evidence still block acceptance.',
     inputSchema: { run_id: z.string(), activity_id: z.string(), report_id: z.string(), brief_version: z.number().int(), evidence: z.string().min(1), supervisor_handle: z.string() },
   }, guarded(async (args, extra) => { await owned(runner, args.run_id, args.supervisor_handle, extra); await runner.accept(args.run_id, args.activity_id, args.report_id, args.brief_version, args.evidence); return output({ accepted: true }); }));
   const transport=new StdioServerTransport();

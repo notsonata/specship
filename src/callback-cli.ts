@@ -3,6 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { request } from 'node:http';
 import { LONG_TOOL_TIMEOUT_MS } from './timeouts.js';
+import { ImplementationReport, ExplorationReport } from './contracts.js';
 
 const descriptorPath=process.env.SPECSHIP_CALLBACK_DESCRIPTOR;
 if(!descriptorPath)throw new Error('Callback bridge must be launched with its configured run descriptor');
@@ -32,5 +33,5 @@ async function post(path:string,body:unknown,signal?:AbortSignal){
 // Those profiles expose only report_result and use a needs_decision report plus a
 // supervisor continuation instead of holding an ask_spec call open indefinitely.
 if(process.env.SPECSHIP_CALLBACK_REPORT_ONLY!=='1')server.registerTool('ask_spec',{description:'Persist a consequential blocker and wait for the original Spec supervisor answer.',inputSchema:{request_id:z.string().min(1),blocker:z.string().min(1),evidence:z.array(z.string()),attempts:z.array(z.string()),decision:z.string().min(1),image_artifact_ids:z.array(z.string()).optional()}},async(args,extra)=>{const answer=await post('/ask_spec',args,extra.signal);return {content:[{type:'text',text:answer.text},...(answer.images??[]).map((image:any)=>({type:'image' as const,data:image.data,mimeType:image.mime}))]};});
-server.registerTool('report_result',{description:'Submit a structured exploration result or final implementation report.',inputSchema:{kind:z.enum(['exploration','implementation']),status:z.enum(['ready_for_review','needs_decision','unable_to_continue']).optional(),changes:z.array(z.string()).optional(),acceptance_evidence:z.array(z.string()).optional(),validation:z.array(z.string()).optional(),deviations:z.array(z.string()).optional(),remaining_issues:z.array(z.string()).optional(),findings:z.array(z.string()).optional(),checks_performed:z.array(z.string()).optional(),uncertainties:z.array(z.string()).optional(),artifacts:z.array(z.unknown()).optional()}},async(args,extra)=>({content:[{type:'text',text:JSON.stringify(await post('/report_result',args,extra.signal))}]}));
+server.registerTool('report_result',{description:'Submit one compact result. For implementation, include acceptance_results for every criterion ID in the brief and exact test commands/results; keep full logs on disk.',inputSchema:{kind:z.enum(['exploration','implementation']),...ImplementationReport.partial().shape,...ExplorationReport.partial().shape}},async(args,extra)=>({content:[{type:'text',text:JSON.stringify(await post('/report_result',args,extra.signal))}]}));
 await server.connect(new StdioServerTransport());

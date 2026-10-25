@@ -94,6 +94,8 @@ export class Runner {
        }
        else nextBrief={artifacts:await materializeArtifacts(this.store.workspace,input.artifacts??[])};
        const selected=resolveProfile(this.config,input.ship_profile);const media=await this.media(this.store.workspace,(nextBrief as any)?.artifacts??[]);
+       const recordedProfile=state.profile as ({name:string}&Profile)|undefined;
+       if(input.run_id&&selected.profile.harness==='opencode'&&selected.profile.model==='default'&&recordedProfile?.name===selected.name&&recordedProfile.harness==='opencode')selected.profile={...selected.profile,model:recordedProfile.model};
        const capabilities=await this.adapter.capabilities?.(selected.profile).catch(()=>undefined);
        if(capabilities){const accepted=new Set(capabilities.media);for(const item of media)if(!accepted.has(item.mime))throw new SpecshipError('CAPABILITY_UNSUPPORTED',`Harness '${selected.profile.harness}' does not accept ${item.mime}`);state.capabilities=capabilities;}
        await this.adapter.validate(selected.profile,media.map(m=>m.mime));
@@ -114,7 +116,7 @@ export class Runner {
        await this.store.save(state);
        this.log(state,'dispatch_start',{kind:input.kind,profile:selected.name,isolation:state.isolation??'shared'});
        let session: string;
-       let native: { session: string; version: string };
+       let native: { session: string; version: string; profile?: Profile };
        let eventAbort: AbortController;
         if (attached) {
           hub = attached.hub; session = attached.session; eventAbort = attached.eventAbort;
@@ -124,6 +126,7 @@ export class Runner {
           hub = new CallbackHub(this.store,state,async()=>{if(!sessionId)return false;const stopped=await this.adapter.abort(sessionId);const controller=this.active.get(state!.run_id);if(stopped&&controller?.timer){clearTimeout(controller.timer);controller.timer=undefined;}return stopped;},this.config.limits.delivery_margin_seconds*1000);
          await hub.start();
           native = await this.adapter.start(this.shipRoot(state),selected.profile,input.kind,{url:hub.url,capability:hub.token,descriptorPath:this.store.callbackDescriptorPath(state.run_id),timeoutMs:LONG_TOOL_TIMEOUT_MS});
+          if(native.profile)state.profile={name:selected.name,...native.profile};
           session = native.session; sessionId = session;
           state.adapter={adapter:this.adapter.name,session:native.session,version:native.version,message_id:null,operation_id:input.operation_id};
          eventAbort = new AbortController();
@@ -439,7 +442,8 @@ export class Runner {
           setPhase(state, !isExploration && status === 'ready_for_review' ? 'awaiting_review' : !isExploration&&status==='needs_decision'?'awaiting_decision':'idle');
           if (state.lifecycle !== 'awaiting_review') await this.store.releaseWriter(state.run_id);
           const kind = isExploration ? 'exploration_completed' : status === 'ready_for_review' ? 'implementation_ready' : status === 'needs_decision' ? 'decision_required' : 'execution_failed';
-          return await this.store.emit(state, kind, { report, checks, checks_passed: checksPassed, uncovered_criteria: uncovered.map(item => item.id), ...(state.ship_workspace?{worktree:state.ship_workspace}:{}), ...(status==='needs_decision'?{request_id:state.report_id}:{}) }) as MaterialEvent;
+          const changed = state.workspace_checkpoint && state.accept_checkpoint ? changedPaths(state.workspace_checkpoint, state.accept_checkpoint) : null;
+          return await this.store.emit(state, kind, { report, checks, checks_passed: checksPassed, uncovered_criteria: uncovered.map(item => item.id), workspace: this.shipRoot(state), changed_paths: changed, ...(state.ship_workspace?{worktree:state.ship_workspace}:{}), ...(status==='needs_decision'?{request_id:state.report_id}:{}) }) as MaterialEvent;
         }
       }
       await this.waitForWake(cell,end,signal);
@@ -608,14 +612,18 @@ export class Runner {
     const acceptedAt=state.accept_checkpoint??state.report_checkpoint;
     if(acceptedAt&&current&&changedPaths(acceptedAt,current).length)throw new Error('Workspace changed after this report; review the changes and obtain fresh validation before accepting');
     if(state.ship_workspace)await this.applyWorktree(state);
-    if(active){
-      if(active.timer)clearTimeout(active.timer);
-      const stopped=await this.adapter.close?.(active.session);
-      if(stopped===false)throw new Error('OpenCode server could not be closed after confirmed idle');
-      active.eventAbort.abort();await active.hub.close();this.active.delete(runId);
-    }
+    if(active?.timer)clearTimeout(active.timer);
+    // Acceptance is decided by the evidence above, never by process cleanup. Persist it first,
+    // then attempt the shutdown: a wedged server becomes a retryable cleanup_pending flag
+    // instead of discarding a reviewed result and reporting the attempt as failed.
     transition(state,'accept');state.accepted={evidence,at:new Date().toISOString()};
     await this.store.save(state);await this.store.releaseWriter(runId);await this.store.removeInterruptDescriptor(runId);
+    if(active){
+      active.eventAbort.abort();await active.hub.close().catch(()=>{});
+      const stopped=await (this.adapter.close?.(active.session)??this.adapter.abort(active.session)).catch(()=>false);
+      if(stopped){this.active.delete(runId);this.log(state,'disposed',{close_adapter:true});}
+      else{state.cleanup_pending=true;await this.store.save(state).catch(()=>{});this.log(state,'cleanup_pending',{reason:'Ship server did not confirm shutdown after acceptance',session:active.session});}
+    }
   }
   async control(input: { run_id: string; operation_id: string; action: 'pause' | 'resume' | 'cancel'; reason: string; supervisor_handle?: string },meta?:{thread?:string;turn?:string},signal?:AbortSignal): Promise<unknown> {
     if(signal?.aborted)throw new Error('Control request was cancelled before applying the operation');

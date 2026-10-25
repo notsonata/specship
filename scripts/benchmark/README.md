@@ -196,6 +196,8 @@ Paid model calls are disabled unless you pass `--execute`:
 npm run benchmark -- run --execute
 ```
 
+For a future authorized comparison, `node scripts/benchmark.mjs run --execute --finish --home <benchmark-home>` runs the trials, grades the same run, and writes its report in one controller invocation. `--finish` alone remains a dry run. The controller writes `runs/<run-id>/progress.json`, trial artifacts, `grade.log`, `report.log`, and `summary.json`; no model is needed to discover the run ID, monitor progress, or coordinate grading. Redirect the controller's output to a local log and let it finish; avoid a supervisor chat repeatedly reading logs, sleeping, or issuing status commentary while it runs. A stopped provider route remains stopped; model-free grading/reporting can still preserve the partial results. The controller exits `0` when the run completes and its report is written. Docker build progress is still written to stderr, so a wrapper must read the process exit code (PowerShell: `$LASTEXITCODE`) rather than treating stderr output, or PowerShell's `$?`, as a failure signal.
+
 Limit a run while developing the harness:
 
 ```sh
@@ -222,6 +224,8 @@ Each trial writes:
 
 The controller stops the container, recovers durable Ship usage, and removes the container even when the agent fails or times out.
 
+Set `ship_first: true` to run the first planned standalone Ship trial before any Codex coordinator work; remaining arms keep their normal rotation. The plan records the exact trial order. Nonretryable authentication, provider, or credit errors stop the remaining batch and are recorded in the run manifest. No completed trials are retried automatically.
+
 ## Grade and report
 
 ```sh
@@ -230,6 +234,7 @@ npm run benchmark -- report --run <run-id>
 ```
 
 `grade` applies the official SWE-bench evaluator to each patch. `report` writes `summary.json` and prints quality and cost aggregates.
+Empty patches remain ungraded with an explicit explanation and a null resolution.
 
 Quality and cost are deliberately separate:
 
@@ -250,4 +255,5 @@ A false acceptance is a trial where Spec accepted the report but SWE-bench did n
 - The agent container receives the repository at the declared base commit and a problem statement. It does not receive the dataset, gold patch, test patch, or controller files.
 - Gold patches and grading happen on the controller and in the trusted evaluator container.
 - Network access stays enabled because model providers need it. This means public-task contamination and network-assisted solving are possible; report them as caveats, not as clean-room results.
+- The `specship` and `specship-dsh` arms run unattended, so the generated Ship profile answers path prompts by configuration instead of waiting for a human: `external_directory` is allowed and `webfetch` is denied, matching the standalone `ship` arm. `question` and `task` stay denied for every profile. Each dispatch is also capped at `timeout_seconds - 300`, so a stalled attempt records `limit_reached` instead of being killed at the container timeout.
 - The benchmark is for comparing workflows, not for producing an official SWE-bench leaderboard submission.
