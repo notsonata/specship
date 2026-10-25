@@ -14,7 +14,7 @@ type QueuedStream = { queue: AdapterEvent[]; wake: Array<() => void>; failure?: 
 type PromptState = { operationId: string; settled: boolean; stopReason?: string; error?: Error; settleWaiters: Array<() => void> };
 type Permission = { id: number | string; session: string; options: Array<{ optionId: string; kind: string; name?: string }> };
 
-const DEEPSEEK_OPTIONS = new Set(['reasoning_effort', 'profile', 'cli', 'sandbox']);
+const DEEPSEEK_OPTIONS = new Set(['reasoning_effort', 'profile', 'cli', 'sandbox', 'callbacks']);
 const CALLBACK_SERVER = 'specship_callbacks';
 
 function modelValue(value: string): [string, string] | undefined {
@@ -63,12 +63,15 @@ export class DeepSeekAdapter implements ShipAdapter {
   private submitted = 0;
   private journalPath = '';
   private logPath = '';
+  private nativeCallbacks = true;
+  private patchPath = '';
 
   constructor(private stopTimeoutMs = 120_000) {}
 
-  async capabilities(profile: Profile): Promise<{ media: string[]; resume: boolean; inTurnDecision: boolean; maxToolCallMs: number; sandbox: 'workspace-write'|'danger-full-access' }> {
+  async capabilities(profile: Profile): Promise<{ media: string[]; resume: boolean; inTurnDecision: boolean; maxToolCallMs?: number; sandbox: 'workspace-write'|'danger-full-access' }> {
     if (!isDeepSeekProfile(profile)) throw new Error('DeepSeek adapter requires a deepseek Ship profile');
-    return { media: [], resume: true, inTurnDecision: false, maxToolCallMs: 60_000, sandbox: profile.options.sandbox ?? 'workspace-write' };
+    const native = (profile.options.callbacks ?? 'native') !== 'mcp';
+    return { media: [], resume: true, inTurnDecision: native, ...(native ? {} : { maxToolCallMs: 60_000 }), sandbox: profile.options.sandbox ?? 'workspace-write' };
   }
 
   async validate(profile: Profile, media: string[]): Promise<void> {
@@ -86,9 +89,10 @@ export class DeepSeekAdapter implements ShipAdapter {
 
   private async launch(profile: DeepSeekProfile): Promise<{ command: string; args: string[]; env: Record<string, string> }> {
     const profileName = profile.options.profile ?? 'acp';
+    const patch = this.nativeCallbacks && this.patchPath ? ['--patch', this.patchPath] : [];
     if (profile.options.cli) {
       const electron = basename(profile.executable).toLowerCase() === 'deepseek harness.exe';
-      return { command: profile.executable, args: [...(electron ? ['--expose-internals'] : []), profile.options.cli, '--profile', profileName], env: electron ? { ELECTRON_RUN_AS_NODE: '1' } : {} };
+      return { command: profile.executable, args: [...(electron ? ['--expose-internals'] : []), profile.options.cli, '--profile', profileName, ...patch], env: electron ? { ELECTRON_RUN_AS_NODE: '1' } : {} };
     }
     const name = basename(profile.executable).toLowerCase();
     if (process.platform === 'win32' && (name.endsWith('.cmd') || name.endsWith('.bat'))) throw new Error('Configure the DeepSeek Harness.exe path on Windows; the dsh.cmd launcher cannot be spawned without a shell');
@@ -96,11 +100,20 @@ export class DeepSeekAdapter implements ShipAdapter {
       const resources = join(dirname(profile.executable), 'resources');
       await access(join(resources, 'app.asar')).catch(() => { throw new Error(`DeepSeek resources were not found beside ${profile.executable}`); });
       const cli = join(resources, 'app.asar', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib', 'cli.js');
-      return { command: profile.executable, args: ['--expose-internals', cli, '--profile', profileName], env: { ELECTRON_RUN_AS_NODE: '1' } };
+      return { command: profile.executable, args: ['--expose-internals', cli, '--profile', profileName, ...patch], env: { ELECTRON_RUN_AS_NODE: '1' } };
     }
-    return { command: profile.executable, args: ['--profile', profileName], env: {} };
+    return { command: profile.executable, args: ['--profile', profileName, ...patch], env: {} };
   }
 
+  private async prepareNativeCallbacks(profile: DeepSeekProfile, callback: { descriptorPath?: string }): Promise<void> {
+    this.nativeCallbacks = (profile.options.callbacks ?? 'native') !== 'mcp' && Boolean(callback.descriptorPath);
+    this.patchPath = '';
+    if (!this.nativeCallbacks || !callback.descriptorPath) return;
+    const pluginUrl = new URL('../dsh-plugin/index.js', import.meta.url);
+    await access(fileURLToPath(pluginUrl)).catch(() => { throw new Error(`The DSH callback plugin is unavailable at ${pluginUrl.pathname}`); });
+    this.patchPath = join(dirname(callback.descriptorPath), 'dsh-native-callbacks.yml');
+    await writeFile(this.patchPath, `- insert:\n    - name: ${JSON.stringify(pluginUrl.href)}\n`, { mode: 0o600 });
+  }
   private log(text: string): void {
     if (!this.logPath) return;
     const value = String(text).slice(0, 64_000);
@@ -123,14 +136,18 @@ export class DeepSeekAdapter implements ShipAdapter {
     let raw: string;
     try { raw = await readFile(path, 'utf8'); }
     catch (error) { throw new Error(`The Ship skill is unavailable at ${path}`, { cause: error }); }
-    return `${raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '')}\nThis is a runner-associated assignment. DeepSeek ACP exposes only mcp__specship_callbacks__report_result; its MCP transport limits a single tool call, so do not depend on a long-held callback. For a consequential decision, submit a report_result with status needs_decision that includes the standard implementation fields (changes, acceptance_evidence, validation, deviations, remaining_issues) and states the blocker, evidence, attempts, and one decision needed in remaining_issues. The supervisor will resume this same session with an answer. Submit the final structured result through report_result before finishing. Routine command and path failures should be investigated within scope.\n`;
+    const native = this.nativeCallbacks;
+    const callbacks = native
+      ? 'This harness exposes the native runner tools ask_spec and report_result directly. Use ask_spec for a consequential decision and wait for the answer; it has no MCP transport timeout. Submit the final structured result through report_result before finishing.'
+      : 'DeepSeek ACP exposes only mcp__specship_callbacks__report_result; its MCP transport limits a single tool call, so do not depend on a long-held callback. For a consequential decision, submit a report_result with status needs_decision that includes the standard implementation fields (changes, acceptance_evidence, validation, deviations, remaining_issues) and states the blocker, evidence, attempts, and one decision needed in remaining_issues. The supervisor will resume this same session with an answer. Submit the final structured result through report_result before finishing.';
+    return `${raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '')}\nThis is a runner-associated assignment. ${callbacks} Routine command and path failures should be investigated within scope.\n`;
   }
 
   private async boot(profile: DeepSeekProfile, kind: 'explore' | 'implement' | 'correct'): Promise<void> {
     this.profile = profile;
     this.activityKind = kind;
     const launch = await this.launch(profile);
-    const env: NodeJS.ProcessEnv = { ...process.env, ...launch.env, DSH_PERMISSION_MODE: kind === 'explore' ? 'read-only' : profile.options.sandbox ?? 'workspace-write' };
+    const env: NodeJS.ProcessEnv = { ...process.env, ...launch.env, DSH_PERMISSION_MODE: kind === 'explore' ? 'read-only' : profile.options.sandbox ?? 'workspace-write', ...(this.callback?.descriptorPath ? { SPECSHIP_CALLBACK_DESCRIPTOR: this.callback.descriptorPath } : {}) };
     delete env.DSH_SESSION_ID;
     delete env.DSH_WEB_URL;
     this.exited = undefined;
@@ -161,6 +178,7 @@ export class DeepSeekAdapter implements ShipAdapter {
 
   private callbackServers(): unknown[] {
     if (!this.callback?.descriptorPath) throw new Error('DeepSeek adapter requires an authenticated callback descriptor path');
+    if (this.nativeCallbacks) return [];
     return [{
       name: CALLBACK_SERVER,
       command: process.execPath,
@@ -238,6 +256,7 @@ export class DeepSeekAdapter implements ShipAdapter {
     this.callback = callback;
     this.journalPath = callback.descriptorPath ? join(dirname(callback.descriptorPath), 'deepseek-prompt.json') : '';
     this.logPath = callback.descriptorPath ? join(dirname(callback.descriptorPath), 'logs', 'deepseek.log') : '';
+    await this.prepareNativeCallbacks(profile, callback);
     this.shipPrompt = await this.loadShipPrompt();
     try {
       await this.boot(profile, kind);
@@ -354,6 +373,7 @@ export class DeepSeekAdapter implements ShipAdapter {
     this.mediaTypes = [];
     this.journalPath = callback.descriptorPath ? join(dirname(callback.descriptorPath), 'deepseek-prompt.json') : '';
     this.logPath = callback.descriptorPath ? join(dirname(callback.descriptorPath), 'logs', 'deepseek.log') : '';
+    await this.prepareNativeCallbacks(value.profile, callback);
     const journal = await this.readJournal();
     if (journal?.session === value.session && journal.status === 'submitted') throw new Error('DeepSeek prompt outcome is ambiguous: the saved activity was submitted but never recorded as complete; it will not be replayed');
     try {
@@ -565,6 +585,8 @@ export class DeepSeekAdapter implements ShipAdapter {
     this.shipPrompt = '';
     this.journalPath = '';
     this.logPath = '';
+    this.patchPath = '';
+    this.nativeCallbacks = true;
     this.closing = false;
   }
 }

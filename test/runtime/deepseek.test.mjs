@@ -9,7 +9,7 @@ import { HarnessRegistry } from '../../dist/adapters/registry.js';
 import { readConfig } from '../../dist/config.js';
 
 const fake = fileURLToPath(new URL('../fixtures/fake-acp.mjs', import.meta.url));
-const profile = { harness: 'deepseek', model: 'deepseek-account/deepseek-flash', executable: process.execPath, options: { cli: fake, reasoning_effort: 'high' } };
+const profile = { harness: 'deepseek', model: 'deepseek-account/deepseek-flash', executable: process.execPath, options: { cli: fake, reasoning_effort: 'high', callbacks: 'mcp' } };
 const callback = { url: 'http://127.0.0.1:1', capability: 'fixture-capability', descriptorPath: '' };
 
 async function fixture(t) {
@@ -160,6 +160,27 @@ test('DeepSeek rejects image input before starting a native process', async t =>
   const adapter = new DeepSeekAdapter(2_000);
   await assert.rejects(adapter.validate(profile, ['image/png']), /no image input/);
   assert.equal(adapter.child, undefined);
+});
+
+test('DeepSeek native callbacks use a per-launch plugin patch instead of MCP', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'specship-deepseek-native-'));
+  const descriptor = join(root, 'callback.json');
+  await writeFile(descriptor, JSON.stringify({ url: callback.url, capability: callback.capability, deadline: null, delivery_margin_ms: 120000, callback_timeout_ms: null }));
+  const log = join(root, 'acp.log');
+  process.env.FAKE_ACP_LOG = log;
+  const nativeProfile = { ...profile, options: { ...profile.options, callbacks: 'native' } };
+  const adapter = new DeepSeekAdapter(2_000);
+  t.after(async () => { await adapter.close(adapter.session).catch(() => {}); delete process.env.FAKE_ACP_LOG; await rm(root, { recursive: true, force: true }); });
+  await adapter.validate(nativeProfile, []);
+  const started = await adapter.start(root, nativeProfile, 'implement', { ...callback, descriptorPath: descriptor });
+  const messages = (await readFile(log, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  const created = messages.find(message => message.event === 'receive' && message.message?.method === 'session/new');
+  assert.ok(created);
+  assert.deepEqual(created.message.params.mcpServers, []);
+  const patch = await readFile(join(root, 'dsh-native-callbacks.yml'), 'utf8');
+  assert.match(patch, /dsh-plugin[\\/]index\.js/);
+  assert.equal((await adapter.snapshot(started.session)).harness, 'deepseek');
+  assert.equal(await adapter.close(started.session), true);
 });
 
 test('DeepSeek profiles parse as a discriminated harness mode and reject foreign options', async t => {

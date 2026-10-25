@@ -23,6 +23,7 @@ const deepseek = z.object({
     profile: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/,'DeepSeek profile name must be a simple profile identifier').optional(),
     cli: z.string().min(1).refine(isAbsolute,'DeepSeek CLI must be an absolute path').optional(),
     sandbox: z.enum(['workspace-write','danger-full-access']).optional(),
+    callbacks: z.enum(['native','mcp']).optional(),
   }).strict(),
 }).strict();
 const profile = z.discriminatedUnion('harness', [opencode, deepseek]);

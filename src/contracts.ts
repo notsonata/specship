@@ -14,7 +14,7 @@ export type EventKind = 'exploration_completed'|'decision_required'|'user_input_
 export interface MaterialEvent { run_id: string; activity_id: string; event_id: string; brief_version: number; profile: string; supervisor_handle: string; report_id?: string; kind: EventKind; payload: unknown }
 export type ActivityKind = 'explore'|'implement'|'correct';
 export interface OpenCodeProfile { harness: 'opencode'; model: string; executable?: string; options: { variant?: 'low'|'medium'|'high'; shell?: string } }
-export interface DeepSeekProfile { harness: 'deepseek'; model: string; executable: string; options: { reasoning_effort?: 'off'|'low'|'high'|'max'; profile?: string; cli?: string; sandbox?: 'workspace-write'|'danger-full-access' } }
+export interface DeepSeekProfile { harness: 'deepseek'; model: string; executable: string; options: { reasoning_effort?: 'off'|'low'|'high'|'max'; profile?: string; cli?: string; sandbox?: 'workspace-write'|'danger-full-access'; callbacks?: 'native'|'mcp' } }
 export type Profile = OpenCodeProfile | DeepSeekProfile;
 export function isOpenCodeProfile(profile: Profile): profile is OpenCodeProfile { return profile.harness === 'opencode'; }
 export function isDeepSeekProfile(profile: Profile): profile is DeepSeekProfile { return profile.harness === 'deepseek'; }
