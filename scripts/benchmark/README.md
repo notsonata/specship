@@ -218,6 +218,10 @@ Quality and cost are deliberately separate:
 
 A false acceptance is a trial where Spec accepted the report but SWE-bench did not resolve the issue. It is counted separately from a normal failure.
 
+## Tests
+
+`npm run check` includes benchmark contract tests: case selection, accounting, DSH preflight shape, DSH arm planning, and fail-closed authentication. They do not call a model. A real quality result still requires `run --execute` with valid credentials.
+
 ## Benchmark safety
 
 - The agent container receives the repository at the declared base commit and a problem statement. It does not receive the dataset, gold patch, test patch, or controller files.
