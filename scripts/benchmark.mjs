@@ -18,6 +18,23 @@ for (let i = 0; i < argv.length; i++) {
   if (options[key] === undefined) throw Error(`Missing value: ${key}`);
 }
 const home = resolve(options['--home'] ?? defaultHome);
+const envFile = options['--dotenv'] ? resolve(options['--dotenv']) : join(dirname(home), '.env');
+let localEnvLoaded = false;
+async function loadLocalEnv() {
+  let text;
+  try { text = await readFile(envFile, 'utf8'); } catch (error) { if (error.code !== 'ENOENT') throw error; return; }
+  localEnvLoaded = true;
+  for (const raw of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const match = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+    if (!match) continue;
+    let value = match[2].trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+    if (!(match[1] in process.env)) process.env[match[1]] = value;
+  }
+}
+await loadLocalEnv();
 const ownedContainers = new Map();
 async function interrupted() {
   await Promise.allSettled([...ownedContainers].map(([name, docker]) => processCommand(docker, ['rm', '-f', name], { capture: true, timeout: 15_000 })));
@@ -112,7 +129,10 @@ if (action === 'init') {
   config.arms = defaultArms;config.credential_env = [];
   config.auth = { mode: 'subscription', codex_file: null, opencode_file: null };
   await save(join(home, 'config.json'), config, true);
+  const envExample = `${envFile}.example`;
+  await writeFile(envExample, '# Copy to .env and fill in the DeepSeek API key. Never commit this file.\nDEEPSEEK_API_KEY=\n', { mode: 0o600, flag: 'wx' }).catch(error => { if (error.code !== 'EEXIST') throw error; });
   console.log(`Created ${join(home, 'config.json')}. No models were called. Set explicit models before run.`);
+  console.log(`Create ${envFile} from ${envExample} for API-key benchmark arms.`);
 } else if (action === 'fetch') {
   const config = await configuration();
   const get = async url => { const response = await fetch(url, { signal: AbortSignal.timeout(60_000) });if (!response.ok) throw Error(`Dataset request failed: ${response.status}`);return response.json(); };
@@ -156,7 +176,7 @@ if (action === 'init') {
     } else {
       if (specArms.length && !config.auth?.codex_file && !availableEnv.some(key => ['CODEX_API_KEY', 'OPENAI_API_KEY'].includes(key))) throw Error('Configure Codex API credentials or auth.codex_file');
       if (openCodeArms.length && !config.auth?.opencode_file && !availableEnv.some(key => key !== 'CODEX_API_KEY')) throw Error('Configure OpenCode provider credentials or auth.opencode_file');
-      if (dshArms.length && !availableEnv.includes('DEEPSEEK_API_KEY')) throw Error('Add DEEPSEEK_API_KEY to credential_env and set it in the environment for the DSH arm');
+      if (dshArms.length && !availableEnv.includes('DEEPSEEK_API_KEY')) throw Error(`Add DEEPSEEK_API_KEY to ${envFile} (the benchmark loads .specship/.env) and list it in credential_env`);
     }
     const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
     const runRoot = join(home, 'runs', runId);await mkdir(runRoot, { recursive: true });
@@ -276,6 +296,8 @@ if (action === 'init') {
   console.log(JSON.stringify(summary.quality_and_cost, null, 2));console.log(`Full report: ${join(runRoot, 'summary.json')}`);
 } else if (action === 'doctor') {
   const config = await configuration();
+  console.log(`env: ${localEnvLoaded ? envFile : `not found (${envFile})`}`);
+  console.log(`DeepSeek API key: ${process.env.DEEPSEEK_API_KEY ? 'present (value not shown)' : 'missing'}`);
   if (config.auth?.mode === 'subscription') {
     try { await checkSubscriptions(config, config.arms ?? defaultArms);console.log('authentication: saved subscriptions verified; no API-key fallback'); }
     catch (error) { console.log(`authentication: unavailable (${error.message})`);process.exitCode = 1; }

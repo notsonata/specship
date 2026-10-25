@@ -143,7 +143,7 @@ test('quality and cost remain independent; failed attempts count toward cost per
 test('benchmark CLI preserves configuration, defaults to dry runs, and detects changed frozen cases', async t => {
   const home = await mkdtemp(join(tmpdir(), 'specship-benchmark-'));
   t.after(async () => { const path = await realpath(home);assert.equal(dirname(path), await realpath(tmpdir()));assert.ok(basename(path).startsWith('specship-benchmark-'));await rm(path, { recursive: true, force: true }); });
-  const cli = (...args) => spawnSync(process.execPath, [resolve('scripts/benchmark.mjs'), ...args, '--home', home], { encoding: 'utf8', windowsHide: true });
+  const cli = (...args) => spawnSync(process.execPath, [resolve('scripts/benchmark.mjs'), ...args, '--home', home, '--dotenv', join(home, '.env')], { encoding: 'utf8', windowsHide: true });
   assert.equal(cli('init').status, 0);
   const original = await readFile(join(home, 'config.json'), 'utf8');
   assert.notEqual(cli('init').status, 0);assert.equal(await readFile(join(home, 'config.json'), 'utf8'), original);

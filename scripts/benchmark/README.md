@@ -36,6 +36,29 @@ The default arms are `codex` and `specship`. Add or remove arms in `config.json`
 
 The controller uses Docker. The agent runs inside disposable `swebench/sweb.eval.x86_64.*` containers and never receives the benchmark cases or gold patches.
 
+## Put the DeepSeek API key in `.specship/.env`
+
+> [!IMPORTANT]
+> The DSH benchmark arm reads the DeepSeek API key from **`<project>/.specship/.env`**. Do not put the key in `config.json`, do not commit it, and do not pass it on the command line.
+
+Create the file once:
+
+```powershell
+notepad C:\path\to\your-project\.specship\.env
+```
+
+It should contain one line:
+
+```ini
+DEEPSEEK_API_KEY=your-deepseek-api-key
+```
+
+The benchmark loads this file automatically before running. A real environment variable with the same name takes precedence. `.specship/` is gitignored.
+
+`npm run benchmark -- init` also writes `.specship/.env.example`, so a fresh install makes this obvious. Copy it to `.specship/.env` and fill in the key. Keep the file readable only by your account.
+
+This is the benchmark credential. The DeepSeek Harness **desktop app** stores its own login in DSH settings; the benchmark does not read that.
+
 ## One-time setup
 
 From the repository root:
@@ -84,11 +107,11 @@ npm run benchmark -- init
     "rates": null
   },
   "auth": {
-    "mode": "subscription",
+    "mode": "api",
     "codex_file": "C:/Users/you/.codex/auth.json",
     "opencode_file": "C:/Users/you/.local/share/opencode/auth.json"
   },
-  "credential_env": []
+  "credential_env": ["DEEPSEEK_API_KEY"]
 }
 ```
 
@@ -104,7 +127,7 @@ Key fields:
 - **`repetitions`** repeats each case and arm.
 - **`auth.mode`** is `subscription` or `api`.
 
-Keep secrets out of `config.json`. For API mode, name environment variables in `credential_env`; the controller passes only those values into the agent container.
+Keep secrets out of `config.json`. For API mode, name environment variables in `credential_env`; the controller passes only those values into the agent container. The DSH key belongs in `.specship/.env`, not in the JSON.
 
 ### Subscription auth
 
@@ -127,9 +150,9 @@ The harness rejects API-key fallback for saved subscription logins and strips un
 "credential_env": ["CODEX_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"]
 ```
 
-Set those variables in the controller environment. Do not put raw keys in the file.
+Put the values in `.specship/.env`; the benchmark loads it. Do not put raw keys in `config.json`.
 
-For `specship-dsh`, add `DEEPSEEK_API_KEY` to `credential_env` and set it before running. The container installs DSH and uses the official DeepSeek API-key route; no saved DSH desktop login is copied.
+For `specship-dsh`, add `DEEPSEEK_API_KEY` to `credential_env` and put the key in `.specship/.env`. The container installs DSH and uses the official DeepSeek API-key route; no saved DSH desktop login is copied.
 
 ## Freeze the dataset
 
@@ -146,7 +169,7 @@ npm run benchmark -- doctor
 npm run benchmark -- plan
 ```
 
-`doctor` checks authentication, Docker, and the evaluator. `plan` shows the exact cases, arms, repetitions, attempt count, models, and whether paid calls are enabled. Neither command calls a model.
+`doctor` checks authentication, Docker, the evaluator, the local `.env`, and whether `DEEPSEEK_API_KEY` is present without printing it. `plan` shows the exact cases, arms, repetitions, attempt count, models, and whether paid calls are enabled. Neither command calls a model.
 
 Optional evaluator sanity check:
 
@@ -163,7 +186,7 @@ npm run benchmark -- build
 npm run benchmark -- preflight
 ```
 
-`build` builds the agent image for each case. `preflight` verifies the image's base commit, Node, Codex, and OpenCode versions without submitting a prompt.
+`build` builds the agent image for each case. `preflight` verifies the image's base commit, Node, Codex, OpenCode, and DSH versions without submitting a prompt.
 
 ## Run
 

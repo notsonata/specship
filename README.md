@@ -354,6 +354,9 @@ Specship refuses ambiguous recovery instead of guessing. If the original Ship pr
 
 The repository includes a frozen SWE-bench Lite harness for comparing Codex, OpenCode, and Specship with either OpenCode or DeepSeek Harness as Ship. It separates quality from API-equivalent cost and requires an explicit `--execute` before any paid model call.
 
+> [!IMPORTANT]
+> **DeepSeek benchmark key:** put `DEEPSEEK_API_KEY` in `<project>/.specship/.env`, one `NAME=value` line. The benchmark loads it automatically. Do not put the key in `config.json` or commit it. `npm run benchmark -- init` writes `.specship/.env.example`; copy it to `.env` and fill it in.
+
 See [scripts/benchmark/README.md](scripts/benchmark/README.md) for setup, controls, preflight, and reporting.
 
 ## Development
