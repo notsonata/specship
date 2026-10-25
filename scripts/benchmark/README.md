@@ -97,7 +97,7 @@ npm run benchmark -- init
     "rates": null
   },
   "ship": {
-    "model": "provider/your-ship-model",
+    "model": "opencode-go/deepseek-v4-pro",
     "effort": "high",
     "rates": null
   },
@@ -119,7 +119,7 @@ Key fields:
 
 - **`sample_size`** and **`seed`** select a deterministic subset of the dataset. Freeze them before the first fetch.
 - **`spec.model`** is the model Codex uses to plan and review.
-- **`ship`** is the OpenCode implementation config.
+- **`ship`** is the OpenCode implementation config. Use any model OpenCode advertises, including DeepSeek, for example `opencode-go/deepseek-v4-pro`.
 - **`dsh`** is the DeepSeek Harness implementation config; `specship-dsh` uses it, so OpenCode and DSH arms can run with different models in the same benchmark.
 - **`effort`** is the model's reasoning effort when supported.
 - **`rates`** are optional USD-per-million-token rates. Without them, token counts remain visible but cost stays unknown.

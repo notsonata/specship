@@ -83,6 +83,12 @@ test('CLI setup configures a DeepSeek ACP profile while keeping the Codex regist
   const repeated=spawn(process.execPath,args,{stdio:['ignore','ignore','pipe']});let repeatErr='';repeated.stderr.on('data',x=>repeatErr+=x);assert.equal(await new Promise(resolve=>repeated.on('close',resolve)),0,repeatErr);
 });
 
+test('setup model selection fails clearly without an interactive terminal',async t=>{
+  const workspace=await temp(t,'specship-setup-select-');const installed=await installRuntime(workspace);
+  const child=spawn(process.execPath,[installed,'setup','--workspace',workspace,'--profile','chosen','--select-model','true','--executable',process.execPath],{stdio:['ignore','ignore','pipe']});
+  let err='';child.stderr.on('data',x=>err+=x);assert.notEqual(await new Promise(resolve=>child.on('close',resolve)),0);assert.match(err,/interactive terminal|Could not list OpenCode models/);
+});
+
 test('setup without a built local runtime fails before creating or replacing configuration',async t=>{
   const workspace=await temp(t,'specship-no-runtime-');await mkdir(join(workspace,'.specship','runs','saved'),{recursive:true});const saved=join(workspace,'.specship','runs','saved','state.json');await writeFile(saved,'existing run bytes');
   const setup=await invokeSetup(cli,workspace);assert.notEqual(setup.code,0);assert.match(setup.err,/Install and build Specship in/);assert.equal(await readFile(saved,'utf8'),'existing run bytes');

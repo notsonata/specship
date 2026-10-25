@@ -2,6 +2,8 @@
 import { resolve, isAbsolute, join } from 'node:path';
 import { isDeepStrictEqual, promisify } from 'node:util';
 import { execFile } from 'node:child_process';
+import { createInterface } from 'node:readline/promises';
+import { existsSync } from 'node:fs';
 import { writeFile, mkdir, readFile, lstat } from 'node:fs/promises';
 import { OpenCodeAdapter } from './adapters/opencode.js';
 import { DeepSeekAdapter } from './adapters/deepseek.js';
@@ -26,6 +28,55 @@ function flags(args: string[]): Map<string, string> {
 }
 const quote = (value: string) => JSON.stringify(value);
 const execute = promisify(execFile);
+
+async function openCodeModels(executable: string): Promise<string[]> {
+  let stdout: string;
+  try {
+    const extension = executable.toLowerCase().split('.').pop();
+    const siblingCmd = executable.replace(/\.ps1$/i, '.cmd');
+    const invocation = process.platform === 'win32' && extension === 'ps1' && existsSync(siblingCmd)
+      ? { command: 'cmd.exe', args: ['/d', '/s', '/c', `${siblingCmd} models`] }
+      : process.platform === 'win32' && extension === 'ps1'
+        ? { command: 'powershell.exe', args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', executable, 'models'] }
+        : process.platform === 'win32' && (extension === 'cmd' || extension === 'bat')
+          ? { command: 'cmd.exe', args: ['/d', '/s', '/c', `${executable} models`] }
+          : { command: executable, args: ['models'] };
+    const result = await execute(invocation.command, invocation.args, { windowsHide: true, maxBuffer: 8_000_000, timeout: 60_000 });
+    stdout = result.stdout;
+  } catch (error) {
+    const detail = (error as { stderr?: string }).stderr?.trim();
+    throw new Error(`Could not list OpenCode models from ${executable}${detail ? `: ${detail}` : ''}`);
+  }
+  const models = [...new Set(stdout.split(/\r?\n/).map(line => line.trim()).filter(line => /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.:-]+$/.test(line)))].sort();
+  if (!models.length) throw new Error(`OpenCode returned no models from ${executable}`);
+  return models;
+}
+
+async function modelsCommand(args: string[]): Promise<void> {
+  const options = flags(args);
+  const executable = options.get('executable') ?? 'opencode';
+  const query = (options.get('query') ?? '').toLowerCase();
+  const models = (await openCodeModels(executable)).filter(model => !query || model.toLowerCase().includes(query));
+  if (!models.length) throw new Error(`No OpenCode model matches "${query}"`);
+  if (options.get('json') === 'true') process.stdout.write(`${JSON.stringify({ models }, null, 2)}\n`);
+  else process.stdout.write(`${models.join('\n')}\n`);
+}
+
+async function selectOpenCodeModel(executable: string): Promise<string> {
+  if (!process.stdin.isTTY) throw new Error('--select-model requires an interactive terminal; pass --model provider/model instead');
+  const models = await openCodeModels(executable);
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    const query = (await rl.question('Filter OpenCode models (blank for all): ')).trim().toLowerCase();
+    const candidates = models.filter(model => !query || model.toLowerCase().includes(query));
+    if (!candidates.length) throw new Error(`No OpenCode model matches "${query}"`);
+    candidates.forEach((model, index) => process.stderr.write(`${index + 1}. ${model}\n`));
+    const answer = await rl.question(`Select model number (1-${candidates.length}): `);
+    const selected = candidates[Number(answer) - 1];
+    if (!selected) throw new Error('Invalid model selection');
+    return selected;
+  } finally { rl.close(); }
+}
 
 async function worktrees(args: string[]): Promise<void> {
   const options = flags(args);
@@ -58,8 +109,9 @@ async function setup(args: string[]): Promise<void> {
   const options = flags(args);
   const workspace = resolve(options.get('workspace') ?? process.cwd());
   const profileName = options.get('profile');
-  const model = options.get('model');
+  let model = options.get('model');
   const executable = options.get('executable');
+  const selectModel = options.get('select-model') === 'true';
   const max = options.has('max-dispatch-seconds') ? Number(options.get('max-dispatch-seconds')) : null;
   const margin = Number(options.get('delivery-margin-seconds') ?? DEFAULT_DELIVERY_MARGIN_SECONDS);
   const variant = options.get('variant');
@@ -68,9 +120,12 @@ async function setup(args: string[]): Promise<void> {
   const cliOption=options.get('cli');
   const sandbox=options.get('sandbox');
   const isolation=options.get('isolation');
-  if (!profileName || !model || !/^[^/]+\/.+$/.test(model) || !executable || !isAbsolute(executable) || max !== null && (!Number.isSafeInteger(max) || max < 1) || !Number.isSafeInteger(margin) || margin < 1 || isolation && !['shared','worktree'].includes(isolation)) {
-    throw new Error('setup requires --profile NAME --model provider/model --executable ABSOLUTE_PATH [--harness opencode|deepseek] [--max-dispatch-seconds N] [--delivery-margin-seconds N] [--variant VALUE] [--shell ABSOLUTE_PATH] [--cli ABSOLUTE_PATH] [--sandbox workspace-write|danger-full-access] [--isolation shared|worktree]');
+  if (!profileName || !executable || !isAbsolute(executable) || max !== null && (!Number.isSafeInteger(max) || max < 1) || !Number.isSafeInteger(margin) || margin < 1 || isolation && !['shared','worktree'].includes(isolation)) {
+    throw new Error('setup requires --profile NAME --executable ABSOLUTE_PATH and either --model provider/model or --select-model true; optional --harness opencode|deepseek --max-dispatch-seconds N --delivery-margin-seconds N --variant VALUE --shell ABSOLUTE_PATH --cli ABSOLUTE_PATH --sandbox workspace-write|danger-full-access --isolation shared|worktree');
   }
+  if (selectModel && harness !== 'opencode') throw new Error('--select-model is available for the opencode harness; pass --model explicitly for deepseek');
+  if (!model && selectModel) model = await selectOpenCodeModel(executable);
+  if (!model || !/^[^/]+\/.+$/.test(model)) throw new Error('setup requires --model provider/model or --select-model true');
   let entry: any;
   if (harness === 'opencode') {
     if (variant && !['low','medium','high'].includes(variant)) throw new Error('OpenCode variant must be low, medium, or high');
@@ -138,6 +193,7 @@ async function interrupt(workspace: string): Promise<void> {
 
 const [command = 'serve', ...args] = process.argv.slice(2);
 if (command === 'setup') await setup(args);
+else if (command === 'models') await modelsCommand(args);
 else if (command === 'interrupt') {
   const options = flags(args); await interrupt(resolve(options.get('workspace') ?? process.cwd()));
 }
@@ -151,4 +207,4 @@ else if(command==='serve') {
   process.once('SIGTERM', () => { void runner.close(); });
   await serveSpec(runner, store);
 }
-else throw new Error(`Unknown command: ${command}. Use setup, serve, interrupt, or worktrees.`);
+else throw new Error(`Unknown command: ${command}. Use setup, models, serve, interrupt, or worktrees.`);

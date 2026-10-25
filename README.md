@@ -102,13 +102,33 @@ Add `.specship/` to your project's `.gitignore`.
 
 Run setup from `.specship/runtime/`. Replace the executable path and model with your own.
 
+**Pick a model first.** OpenCode exposes its installed catalog:
+
+```powershell
+node dist/cli.js models --executable "C:\path\to\opencode.exe" --query deepseek
+```
+
+Or let setup ask interactively:
+
+```powershell
+node dist/cli.js setup `
+  --workspace ../.. `
+  --profile workhorse `
+  --select-model true `
+  --variant high `
+  --executable "C:\path\to\opencode.exe" `
+  --shell "C:\Windows\System32\cmd.exe"
+```
+
+In a non-interactive install, pass the selected ID directly:
+
 **Windows (PowerShell)**
 
 ```powershell
 node dist/cli.js setup `
   --workspace ../.. `
   --profile workhorse `
-  --model openai/gpt-6-luna `
+  --model opencode-go/deepseek-v4-pro `
   --variant high `
   --executable "C:\path\to\opencode.exe" `
   --shell "C:\Windows\System32\cmd.exe"
@@ -120,11 +140,13 @@ node dist/cli.js setup `
 node dist/cli.js setup \
   --workspace ../.. \
   --profile workhorse \
-  --model openai/gpt-6-luna \
+  --model opencode-go/deepseek-v4-pro \
   --variant high \
   --executable "$(command -v opencode)" \
   --shell /bin/sh
 ```
+
+`openai/gpt-6-luna` is only one available option; the model selector and `--model` accept any model advertised by OpenCode. To use DeepSeek through OpenCode, use the DeepSeek model ID shown by `models` (for example `opencode-go/deepseek-v4-pro`).
 
 Setup writes `.specship/config.json` and prints two pieces of Codex configuration. It also creates the local credential file inside the project:
 
@@ -198,7 +220,7 @@ OpenCode is the primary Ship harness.
     "profiles": {
       "workhorse": {
         "harness": "opencode",
-        "model": "openai/gpt-6-luna",
+        "model": "opencode-go/deepseek-v4-pro",
         "executable": "C:/path/to/opencode.exe",
         "options": {
           "variant": "high",
@@ -309,7 +331,7 @@ Keep Ship's edits out of the main checkout until acceptance:
     "profiles": {
       "workhorse": {
         "harness": "opencode",
-        "model": "openai/gpt-6-luna",
+        "model": "opencode-go/deepseek-v4-pro",
         "options": {}
       }
     }
