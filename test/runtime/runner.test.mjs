@@ -137,6 +137,16 @@ test('duplicate operation IDs are idempotent and stale replies fail closed',asyn
 
 test('active workspace lease rejects a concurrent independent run',async t=>{const f=await fixture(t,30);const event=await f.runner.dispatch({operation_id:'writer',kind:'implement',brief});assert.equal(event.kind,'decision_required');await assert.rejects(f.runner.dispatch({operation_id:'second',kind:'implement',brief}),/Workspace writer is owned/);assert.equal((await f.store.load(event.run_id)).writer,true);});
 
+test('a dispatch reclaims writer state left by a dead process',async t=>{
+  const f=await fixture(t,30);
+  const stale={pid:2_000_000_000,started_at:new Date().toISOString(),claimed_at:new Date().toISOString()};
+  await writeFile(join(f.root,'.specship','writer.lock'),JSON.stringify({pid:stale.pid,started_at:stale.started_at}));
+  await writeFile(join(f.root,'.specship','active-writer.json'),JSON.stringify({run_id:'dead-run',pid:stale.pid,claimed_at:stale.claimed_at}));
+  const event=await f.runner.dispatch({operation_id:'stale-owner',kind:'implement',brief});
+  assert.equal(event.kind,'decision_required');
+  assert.equal((await f.store.load(event.run_id)).writer,true);
+});
+
 test('ambiguous submission is not replayed on duplicate operation ID',async t=>{const f=await fixture(t);const original=f.adapter.submit.bind(f.adapter);f.adapter.submit=async()=>{throw new Error('connection lost after send may have occurred');};await assert.rejects(f.runner.dispatch({operation_id:'ambiguous',kind:'implement',brief}),/connection lost/);await assert.rejects(f.runner.dispatch({operation_id:'ambiguous',kind:'implement',brief}),/already prepared\/submitted/);f.adapter.submit=original;});
 
 test('cancellation requires adapter stop confirmation, disposes the pump, and never manufactures success',async t=>{const f=await fixture(t);f.adapter.submit=async(session,operation)=>{f.adapter.sessions.get(session).operation=operation;return {messageId:`message-${operation}`};};const ctrl=new AbortController();const pending=f.runner.dispatch({operation_id:'cancel',kind:'implement',brief},undefined,ctrl.signal);await new Promise(r=>setTimeout(r,30));ctrl.abort();const event=await pending;assert.equal(event.kind,'paused');const state=await f.store.load(event.run_id);assert.equal(state.lifecycle,'paused');assert.equal(state.writer,false);assert.equal(f.adapter.closeCount,1);assert.equal(f.runner.active.size,0);await f.runner.close();assert.equal(f.adapter.closeCount,1);});

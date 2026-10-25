@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFile, open, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { appendFile, open, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { checkpoint, type WorkspaceCheckpoint } from './workspace.js';
 import { preparePrivateStorage, privateDirectory } from './private-storage.js';
@@ -42,16 +42,26 @@ export class Store {
     if(recovery){try{guard=await open(join(this.dir,'recovery.lock'),'wx',0o600);await guard.writeFile(JSON.stringify({pid:process.pid,started_at:new Date().toISOString()}));}catch{throw new Error('Recovery guard exists: inspect .specship/recovery.lock and verify its owner has exited before removing a stale guard');}}
     try{
     try{lock=await open(path,'wx',0o600);}catch(error:any){
-      if(error.code!=='EEXIST'||!recovery)throw new Error('Workspace has an active or unreconciled state writer');
-      const old=JSON.parse(await readFile(path,'utf8'));if(!Number.isInteger(old.pid)||this.pidAlive(old.pid))throw new Error('State writer may still be alive; refusing to reclaim lock');
-      const current=JSON.parse(await readFile(path,'utf8'));if(current.pid!==old.pid||current.started_at!==old.started_at)throw new Error('Writer lock changed during recovery');
-      const {unlink}=await import('node:fs/promises');await unlink(path);lock=await open(path,'wx',0o600);
+      if(error.code!=='EEXIST')throw error;
+      const old=JSON.parse(await readFile(path,'utf8'));
+      if(recovery){
+        if(!Number.isInteger(old.pid)||this.pidAlive(old.pid))throw new Error('State writer may still be alive; refusing to reclaim lock');
+        const current=JSON.parse(await readFile(path,'utf8'));if(current.pid!==old.pid||current.started_at!==old.started_at)throw new Error('Writer lock changed during recovery');
+        await unlink(path);lock=await open(path,'wx',0o600);
+      } else {
+        // A holder that died mid-dispatch must not wedge the workspace forever. Take the
+        // lock only when its process is provably gone; a live owner still fails closed.
+        if(!Number.isInteger(old.pid)||this.pidAlive(old.pid))throw new Error('Workspace has an active or unreconciled state writer');
+        const current=JSON.parse(await readFile(path,'utf8'));if(current.pid!==old.pid||current.started_at!==old.started_at)throw new Error('Workspace writer changed while its stale lock was being reclaimed');
+        await unlink(path).catch(verifyError=>{if((verifyError as NodeJS.ErrnoException).code!=='ENOENT')throw verifyError;});
+        lock=await open(path,'wx',0o600);
+      }
     }
     await lock.writeFile(JSON.stringify({pid:process.pid,started_at:new Date().toISOString()}));
     return async()=>{await lock!.close();const {unlink}=await import('node:fs/promises');await unlink(path).catch(()=>{});};
     }finally{if(guard){await guard.close();await unlink(join(this.dir,'recovery.lock')).catch(()=>{});}}
   }
-  async claimWriter(runId:string):Promise<void>{const path=join(this.dir,'active-writer.json');try{await writeFile(path,JSON.stringify({run_id:runId,pid:process.pid,claimed_at:new Date().toISOString()}),{flag:'wx',mode:0o600});}catch(e:any){if(e.code!=='EEXIST')throw e;const current=JSON.parse(await readFile(path,'utf8'));if(current.run_id!==runId||current.pid!==process.pid)throw new Error(`Workspace writer is owned by run ${current.run_id}; reconcile or stop it before dispatch`);}}
+  async claimWriter(runId:string):Promise<void>{const path=join(this.dir,'active-writer.json');for(let attempt=0;attempt<2;attempt++){try{await writeFile(path,JSON.stringify({run_id:runId,pid:process.pid,claimed_at:new Date().toISOString()}),{flag:'wx',mode:0o600});return;}catch(e:any){if(e.code!=='EEXIST')throw e;const current=JSON.parse(await readFile(path,'utf8'));if(current.run_id===runId&&current.pid===process.pid)return;if(!Number.isInteger(current.pid)||this.pidAlive(current.pid))throw new Error(`Workspace writer is owned by run ${current.run_id}; reconcile or stop it before dispatch`);await unlink(path).catch(verifyError=>{if((verifyError as NodeJS.ErrnoException).code!=='ENOENT')throw verifyError;});}}throw new Error('Workspace writer lease could not be claimed after clearing a stale owner');}
   async reclaimWriter(runId:string):Promise<void>{const path=join(this.dir,'active-writer.json');const current=JSON.parse(await readFile(path,'utf8'));if(current.run_id!==runId)throw new Error('Writer lease belongs to a different run');if(!Number.isInteger(current.pid)||this.pidAlive(current.pid))throw new Error('Saved writer process may still be alive; refusing lease theft');const {unlink}=await import('node:fs/promises');await unlink(path);await writeFile(path,JSON.stringify({run_id:runId,pid:process.pid,claimed_at:new Date().toISOString(),recovered:true}),{flag:'wx',mode:0o600});}
   private pidAlive(pid:number):boolean{try{process.kill(pid,0);return true;}catch(e:any){return e.code==='EPERM';}}
   callbackDescriptorPath(runId:string):string{return join(this.runDir(runId),'callback.json');}
