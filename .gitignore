@@ -1,5 +1,6 @@
 *.md
 !/README.md
+!/BENCHMARK_FINDINGS.md
 !/scripts/benchmark/README.md
 !/.agents/skills/spec/SKILL.md
 !/.agents/skills/ship/SKILL.md
