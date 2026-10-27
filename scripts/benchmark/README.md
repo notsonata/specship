@@ -18,8 +18,27 @@ The harness is intentionally conservative:
 | `ship` | One OpenCode coding agent |
 | `specship` | Codex as Spec + OpenCode as Ship |
 | `specship-dsh` | Codex as Spec + DeepSeek Harness as Ship |
+| `codex-opencode` | Codex launches and supervises OpenCode through the shell, without Specship |
 
 The default arms are `codex` and `specship`. Add or remove arms in `config.json`.
+
+For an unseen follow-up sample, choose a new benchmark home and seed, set `dataset`
+to `SWE-bench/SWE-bench_Verified` (or another evaluator-compatible SWE-bench dataset),
+and optionally set `exclude_instance_ids` to earlier case IDs. `fetch` filters those
+IDs before deterministic selection and records the exclusions in the frozen lock.
+If too few eligible cases remain, selection fails rather than silently shrinking
+the sample. Freeze the set before model execution; do not replace difficult cases.
+
+For a direct supervision comparison, set `arms` to `["specship", "codex-opencode"]`.
+Both arms use the same `spec` and `ship` models, reasoning efforts, frozen cases,
+timeouts, and held-out evaluator, with arm order rotating across cases/repetitions.
+The direct arm receives a compact delegation/review prompt and the exact OpenCode
+CLI invocation; Codex owns launch, waiting, session continuation, and review without
+Specship skills or MCP registration. Its final explicit verdict supplies `accepted`,
+while durable OpenCode usage must confirm delegation and the configured model.
+Both models' usage counts toward cost, including correction calls. A verdict is
+self-reported review evidence; held-out grading determines correctness for both arms.
+This comparison measures ordinary task execution, not interruption/recovery guarantees.
 
 `specship-dsh` uses the official DeepSeek API-key route (`deepseek-official/...`) inside the Linux benchmark container. It requires `DEEPSEEK_API_KEY` and `auth.mode: "api"`; saved Codex/OpenCode subscription auth does not apply to this arm. Quality is measured normally, but DSH usage and API-equivalent cost remain `null` because the benchmark does not have a durable DSH token-usage export yet.
 
@@ -30,11 +49,18 @@ The default arms are `codex` and `specship`. Add or remove arms in `config.json`
 | Node.js | 22 or newer |
 | Docker | A working daemon; Linux containers with `linux/amd64` support |
 | Python | 3.10+ for the SWE-bench evaluator |
-| Codex | Installed and authenticated for the `codex`, `specship`, and `specship-dsh` arms |
-| OpenCode | Installed and authenticated for the `ship` and `specship` arms |
+| Codex | Installed and authenticated for the `codex`, `codex-opencode`, `specship`, and `specship-dsh` arms |
+| OpenCode | Installed and authenticated for the `ship`, `codex-opencode`, and `specship` arms |
 | DeepSeek API key | `DEEPSEEK_API_KEY` for the `specship-dsh` arm |
 
 The controller uses Docker. The agent runs inside disposable `swebench/sweb.eval.x86_64.*` containers and never receives the benchmark cases or gold patches.
+
+Prepared images are checked against each task's frozen base commit. If their
+prepared Git tree contains source changes, tracked source is restored to that base
+inside the disposable container, preserving installed dependencies and untracked
+build artifacts. Preflight and trial results record both the prepared head and
+whether restoration was needed; the original repository history is then removed
+before a model runs.
 
 ## Put the DeepSeek API key in `.specship/.env`
 
@@ -131,7 +157,7 @@ Keep secrets out of `config.json`. For API mode, name environment variables in `
 
 ### Subscription auth
 
-Use your saved Codex and OpenCode logins for the `codex`, `ship`, and `specship` arms:
+Use your saved Codex and OpenCode logins for the `codex`, `ship`, `codex-opencode`, and `specship` arms:
 
 ```json
 "auth": {
@@ -178,6 +204,13 @@ npm run benchmark -- controls
 ```
 
 Controls grade a gold patch and a no-op patch for every frozen case. They do **not** call a model, but they do build and run Docker images and can take a while.
+
+To grade with an already built evaluator while registry access is unavailable, set
+`grader_image_id` to its exact local `sha256:...` image ID in `config.json`.
+The controller verifies the installed `swebench` version against `swebench_version`
+and records the immutable image ID with each grade. Without this option it builds
+the evaluator normally. Incomplete grading returns a nonzero exit code while
+preserving saved patches and usage; retrying `grade` never calls a model.
 
 ## Inspect before spending
 

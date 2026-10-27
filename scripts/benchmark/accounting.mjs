@@ -1,24 +1,27 @@
 import { createHash } from 'node:crypto';
 
 export const digest = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
-export const arms = ['codex', 'ship', 'specship', 'specship-dsh'];
+export const arms = ['codex', 'ship', 'specship', 'specship-dsh', 'codex-opencode'];
 export const defaultArms = ['codex', 'specship'];
-export const usesSpec = arm => arm === 'codex' || arm === 'specship' || arm === 'specship-dsh';
-export const usesShip = arm => arm === 'ship' || arm === 'specship' || arm === 'specship-dsh';
-export const usesOpenCodeShip = arm => arm === 'ship' || arm === 'specship';
+export const usesSpec = arm => arm === 'codex' || arm === 'specship' || arm === 'specship-dsh' || arm === 'codex-opencode';
+export const usesShip = arm => arm === 'ship' || arm === 'specship' || arm === 'specship-dsh' || arm === 'codex-opencode';
+export const usesOpenCodeShip = arm => arm === 'ship' || arm === 'specship' || arm === 'codex-opencode';
 export const usesDshShip = arm => arm === 'specship-dsh';
 const count = value => Number.isSafeInteger(value) && value >= 0;
 
 export const treeContents = listing => listing.split('\0').filter(Boolean).map(entry => entry.replace(/^[0-7]+ /, '')).sort();
 
-export function selectCases(rows, seed, limit) {
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > rows.length) throw Error('Invalid sample size');
+export function selectCases(rows, seed, limit, excludedIds = []) {
+  if (!Array.isArray(excludedIds) || excludedIds.some(id => typeof id !== 'string' || !/^[A-Za-z0-9_.-]+$/.test(id)) || new Set(excludedIds).size !== excludedIds.length) throw Error('Invalid excluded instance IDs');
+  const excluded = new Set(excludedIds);
+  const eligible = rows.filter(row => !excluded.has(row.instance_id));
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > eligible.length) throw Error('Invalid sample size');
   const seen = new Set();
   for (const row of rows) {
     if (!/^[A-Za-z0-9_.-]+$/.test(row.instance_id) || seen.has(row.instance_id) || !/^[a-f0-9]{40}$/.test(row.base_commit) || !/^[\w.-]+\/[\w.-]+$/.test(row.repo) || typeof row.problem_statement !== 'string') throw Error('Invalid or duplicate SWE-bench case');
     seen.add(row.instance_id);
   }
-  return [...rows].sort((a, b) => digest(`${seed}:${a.instance_id}`).localeCompare(digest(`${seed}:${b.instance_id}`))).slice(0, limit);
+  return [...eligible].sort((a, b) => digest(`${seed}:${a.instance_id}`).localeCompare(digest(`${seed}:${b.instance_id}`))).slice(0, limit);
 }
 
 export function codexUsage(events) {

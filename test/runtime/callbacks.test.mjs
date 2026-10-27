@@ -6,6 +6,7 @@ import { basename, dirname, join } from 'node:path';
 import { Store } from '../../dist/state.js';
 import { CallbackHub } from '../../dist/callbacks.js';
 import { materializeArtifacts } from '../../dist/artifacts.js';
+import { apply as registerNativeCallbacks } from '../../dist/dsh-plugin/index.js';
 
 const question = { request_id: '__proto__', blocker: 'Ordering is unspecified', decision: 'Ascending or descending?', evidence: ['Existing sort is ambiguous'], attempts: ['Checked callers'] };
 const report = { status: 'ready_for_review', changes: [], acceptance_evidence: ['done'], validation: [], deviations: [], remaining_issues: [] };
@@ -34,6 +35,51 @@ async function fixture(t) {
 function post(hub, path, body, signal) {
   return fetch(hub.url + path, { method: 'POST', headers: { authorization: `Bearer ${hub.token}`, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: signal ?? AbortSignal.timeout(5_000) });
 }
+
+test('ready reports reject missing, duplicate, unknown or blank criterion evidence before saving and permit same-session repair', async t => {
+  const f = await fixture(t);
+  f.state.brief = { acceptance_criteria: [{ id: 'A1', text: 'behavior' }, { id: 'A2', text: 'validation' }] };
+  await f.store.save(f.state);
+  const evidence = [{ criterion_id: 'A1', evidence: 'independent behavior observed' }, { criterion_id: 'A2', evidence: 'existing tests passed' }];
+  for (const acceptance_results of [undefined, [evidence[0]], [...evidence, evidence[0]], [...evidence, { criterion_id: 'typo', evidence: 'observed' }], [evidence[0], { ...evidence[1], evidence: '  ' }]]) {
+    const rejected = await post(f.hub, '/report_result', { ...report, acceptance_evidence: ['A1 and A2 covered in prose'], ...(acceptance_results ? { acceptance_results } : {}) });
+    assert.equal(rejected.status, 400);
+    const saved = await f.store.load(f.state.run_id);
+    assert.equal(saved.report, undefined);assert.equal(saved.report_id, undefined);assert.equal(saved.pending, undefined);
+    assert.equal(saved.lifecycle, 'running');
+  }
+  const repaired = { ...report, acceptance_results: evidence };
+  assert.equal((await post(f.hub, '/report_result', repaired)).status, 200);
+  const id = f.state.report_id;
+  assert.deepEqual((await f.store.load(f.state.run_id)).report.acceptance_results, evidence);
+  assert.equal((await post(f.hub, '/report_result', repaired)).status, 200);
+  assert.equal(f.state.report_id, id);
+});
+
+test('a decision report can disclose unverified criteria without claiming ready_for_review', async t => {
+  const f = await fixture(t);
+  f.state.brief = { acceptance_criteria: [{ id: 'A1', text: 'not yet verified' }] };
+  const response = await post(f.hub, '/report_result', { ...report, status: 'needs_decision', remaining_issues: ['Need the behavior contract'] });
+  assert.equal(response.status, 200);
+  assert.equal((await f.store.load(f.state.run_id)).report.status, 'needs_decision');
+});
+
+test('native callback reports expose structured evidence and can repair a rejected report', async t => {
+  const f = await fixture(t);
+  f.state.brief = { acceptance_criteria: [{ id: 'A1', text: 'behavior' }] };
+  const previousDescriptor = process.env.SPECSHIP_CALLBACK_DESCRIPTOR;
+  process.env.SPECSHIP_CALLBACK_DESCRIPTOR = f.store.callbackDescriptorPath(f.state.run_id);
+  t.after(() => { if (previousDescriptor === undefined) delete process.env.SPECSHIP_CALLBACK_DESCRIPTOR; else process.env.SPECSHIP_CALLBACK_DESCRIPTOR = previousDescriptor; });
+  const tools = new Map();
+  registerNativeCallbacks({ tools: { register(tool) { tools.set(tool.name, tool); } } });
+  const tool = tools.get('report_result');
+  assert.ok(tool.parameters.properties.acceptance_results, 'native schema must allow the evidence it forwards');
+  await assert.rejects(tool.execute({ kind: 'implementation', ...report }), /missing criterion IDs: A1/);
+  assert.equal(f.state.report, undefined);
+  const acceptance_results = [{ criterion_id: 'A1', evidence: 'unchanged caller establishes the contract' }];
+  assert.deepEqual(await tool.execute({ kind: 'implementation', ...report, acceptance_results }), { accepted: true });
+  assert.deepEqual((await f.store.load(f.state.run_id)).report.acceptance_results, acceptance_results);
+});
 async function pending(state) {
   for (let count = 0; count < 200; count++) {
     if (state.events.some(event => event.kind === 'decision_required')) return;

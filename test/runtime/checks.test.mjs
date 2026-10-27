@@ -55,7 +55,12 @@ class CallbackBridgeAdapter extends ReportAdapter {
       assert.deepEqual(field.items.required, ['criterion_id', 'evidence']);
       const invalid = await client.callTool({ name: 'report_result', arguments: { kind: 'implementation', ...report, acceptance_results: [{ criterion_id: 'A1', evidence: '' }] } });
       assert.equal(invalid.isError, true);
-      const result = await client.callTool({ name: 'report_result', arguments: { kind: 'implementation', ...report } });
+      const { acceptance_results, ...unstructured } = report;
+      const missing = await client.callTool({ name: 'report_result', arguments: { kind: 'implementation', ...unstructured } });
+      assert.equal(missing.isError, true);
+      assert.match(JSON.stringify(missing), /missing criterion IDs: A1/);
+      const { acceptance_evidence, ...structured } = report;
+      const result = await client.callTool({ name: 'report_result', arguments: { kind: 'implementation', ...structured } });
       assert.notEqual(result.isError, true, JSON.stringify(result));
       this.submitted = true;
       return { messageId: 'report-message' };
@@ -69,6 +74,7 @@ test('real callback MCP preserves criterion evidence through dispatch and accept
     const event = await f.runner.dispatch({ operation_id: 'bridge-acceptance', kind: 'implement', brief: { ...brief, required_checks: configured ? ['pass'] : [] } });
     assert.equal(event.kind, 'implementation_ready');
     assert.deepEqual(event.payload.report.acceptance_results, report.acceptance_results);
+    assert.deepEqual(event.payload.report.acceptance_evidence, [], 'structured evidence does not require duplicate legacy prose');
     assert.deepEqual(event.payload.uncovered_criteria, []);
     assert.equal(event.payload.checks_passed, true);
     assert.equal(event.payload.workspace, f.root);
@@ -144,4 +150,12 @@ test('missing acceptance criterion coverage blocks acceptance', async t => {
   assert.deepEqual(event.payload.uncovered_criteria, []);
   f.runner.active.get(event.run_id).state.report.acceptance_results = [];
   await assert.rejects(f.runner.accept(event.run_id, event.activity_id, event.report_id, event.brief_version, 'independent review'), /Acceptance evidence is missing/);
+  for (const results of [
+    [{ criterion_id: 'A1', evidence: '   ' }],
+    [...report.acceptance_results, ...report.acceptance_results],
+    [...report.acceptance_results, { criterion_id: 'unknown', evidence: 'not in brief' }],
+  ]) {
+    f.runner.active.get(event.run_id).state.report.acceptance_results = results;
+    await assert.rejects(f.runner.accept(event.run_id, event.activity_id, event.report_id, event.brief_version, 'independent review'), /Acceptance evidence is missing or invalid/);
+  }
 });

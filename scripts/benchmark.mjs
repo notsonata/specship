@@ -47,11 +47,11 @@ async function save(path, value, exclusive = false) { await writeFile(path, `${J
 async function processCommand(executable, args, { cwd = repository, input, timeout = 120_000, capture = false } = {}) {
   return new Promise((resolvePromise, reject) => {
     const env = { ...process.env, PATH: [isAbsolute(executable) ? dirname(executable) : '', process.env.PATH].filter(Boolean).join(delimiter) };
-    const child = spawn(executable, args, { cwd, env, windowsHide: true, stdio: ['pipe', capture ? 'pipe' : 'inherit', capture ? 'pipe' : 'inherit'] });
+    const child = spawn(executable, args, { cwd, env, windowsHide: true, stdio: ['pipe', capture ? 'pipe' : 'inherit', 'pipe'] });
     const stdout = [], stderr = [];let size = 0;
     const timer = setTimeout(() => { child.kill();reject(Error(`Command timed out: ${executable}`)); }, timeout);
     child.stdout?.on('data', chunk => { size += chunk.length;if (size > 64_000_000) { child.kill();reject(Error('Command output exceeds 64 MB')); } else stdout.push(chunk); });
-    child.stderr?.on('data', chunk => stderr.push(chunk));
+    child.stderr?.on('data', chunk => { stderr.push(chunk);if (!capture) process.stderr.write(chunk); });
     child.once('error', error => { clearTimeout(timer);reject(error); });
     child.once('close', code => { clearTimeout(timer);const output = Buffer.concat(stdout).toString();code === 0 ? resolvePromise(output) : reject(Error(`${executable} exited ${code}: ${Buffer.concat(stderr).toString().slice(-2000)}`)); });
     child.stdin.on('error', () => {});child.stdin.end(input);
@@ -62,6 +62,7 @@ async function configuration() {
   if (config.schema !== 1 || !Number.isSafeInteger(config.timeout_seconds) || config.timeout_seconds < 1 || config.timeout_seconds > 86_400 || !Number.isSafeInteger(config.repetitions) || config.repetitions < 1 || config.repetitions > 100) throw Error('Invalid benchmark configuration');
   if (config.arms && (!Array.isArray(config.arms) || !config.arms.length || new Set(config.arms).size !== config.arms.length || config.arms.some(arm => !arms.includes(arm)))) throw Error('Invalid benchmark arms');
   if (config.auth?.mode && !['api', 'subscription'].includes(config.auth.mode)) throw Error('Unknown authentication mode');
+  if (config.grader_image_id && !/^sha256:[a-f0-9]{64}$/.test(config.grader_image_id)) throw Error('grader_image_id must be an exact local SHA-256 image ID');
   return config;
 }
 async function frozen() {
@@ -93,7 +94,7 @@ async function buildImage(config, row) {
     await mkdir(dirname(join(buildRoot, path)), { recursive: true });await cp(join(repository, path), join(buildRoot, path), { recursive: true });
   }
   const dshVersion = config.dsh_version ?? '0.2.1-rc.2';
-  const image = `specship-benchmark:${digest({ instance: imageFor(config, row), codex: config.codex_version, opencode: config.opencode_version, dsh: dshVersion, runtime: await readFile(join(repository, 'dist/runner.js'), 'utf8'), accounting: await readFile(join(repository, 'scripts/benchmark/accounting.mjs'), 'utf8'), agent: await readFile(join(repository, 'scripts/benchmark/agent.mjs'), 'utf8') }).slice(0, 20)}`;
+  const image = `specship-benchmark:${digest({ instance: imageFor(config, row), codex: config.codex_version, opencode: config.opencode_version, dsh: dshVersion, runtime: await readFile(join(repository, 'dist/runner.js'), 'utf8'), accounting: await readFile(join(repository, 'scripts/benchmark/accounting.mjs'), 'utf8'), agent: await readFile(join(repository, 'scripts/benchmark/agent.mjs'), 'utf8'), direct: await readFile(join(repository, 'scripts/benchmark/direct.mjs'), 'utf8') }).slice(0, 20)}`;
   await processCommand(config.docker, ['build', '--platform', 'linux/amd64', '-f', join(buildRoot, 'scripts/benchmark/Dockerfile'), '--build-arg', `INSTANCE_IMAGE=${imageFor(config, row)}`, '--build-arg', `CODEX_VERSION=${config.codex_version}`, '--build-arg', `OPENCODE_VERSION=${config.opencode_version}`, '--build-arg', `DSH_VERSION=${dshVersion}`, '-t', image, buildRoot], { timeout: 1_800_000 });
   const imageId = (await processCommand(config.docker, ['image', 'inspect', '--format', '{{.Id}}', image], { capture: true })).trim();
   return { image, imageId };
@@ -102,16 +103,20 @@ async function gradePatch(config, datasetPath, evalRoot, instanceId, label, patc
   const evaluationId = `bench-${randomUUID()}`;
   const predictions = join(evalRoot, `${evaluationId}.jsonl`);
   await writeFile(predictions, JSON.stringify({ instance_id: instanceId, model_name_or_path: label, model_patch: patch }) + '\n');
-  const graderImage = `specship-benchmark-grader:${config.swebench_version}`;
-  await processCommand(config.docker, ['build', '--platform', 'linux/amd64', '-f', join(repository, 'scripts/benchmark/evaluator.Dockerfile'), '--build-arg', `SWEBENCH_VERSION=${config.swebench_version}`, '-t', graderImage, join(repository, 'scripts/benchmark')], { timeout: 1_800_000 });
+  const graderImage = config.grader_image_id ?? `specship-benchmark-grader:${config.swebench_version}`;
+  if (!config.grader_image_id) await processCommand(config.docker, ['build', '--platform', 'linux/amd64', '-f', join(repository, 'scripts/benchmark/evaluator.Dockerfile'), '--build-arg', `SWEBENCH_VERSION=${config.swebench_version}`, '-t', graderImage, join(repository, 'scripts/benchmark')], { timeout: 1_800_000 });
   const graderImageId = (await processCommand(config.docker, ['image', 'inspect', '--format', '{{.Id}}', graderImage], { capture: true })).trim();
+  if (config.grader_image_id) {
+    const version = (await processCommand(config.docker, ['run', '--rm', '--entrypoint', 'python', graderImageId, '-c', 'import importlib.metadata; print(importlib.metadata.version("swebench"))'], { capture: true })).trim();
+    if (version !== config.swebench_version) throw Error(`Cached evaluator version mismatch: expected ${config.swebench_version}, found ${version}`);
+  }
   const graderName = `specship-grader-${randomUUID()}`;
   const instanceContainer = `sweb.eval.${instanceId}.${evaluationId}`;
   ownedContainers.set(graderName, config.docker);
   ownedContainers.set(instanceContainer, config.docker);
   try {
     // Only the trusted, model-free evaluator gets the Docker socket and held-out cases.
-    await processCommand(config.docker, ['run', '--platform', 'linux/amd64', '--name', graderName, '--mount', `type=bind,source=${evalRoot},target=/evaluation`, '--mount', 'type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock', graderImage, '--dataset_name', `/evaluation/${basename(datasetPath)}`, '--predictions_path', `/evaluation/${evaluationId}.jsonl`, '--run_id', evaluationId, '--max_workers', '1'], { timeout: 2_100_000 });
+    await processCommand(config.docker, ['run', '--platform', 'linux/amd64', '--name', graderName, '--mount', `type=bind,source=${evalRoot},target=/evaluation`, '--mount', 'type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock', graderImageId, '--dataset_name', `/evaluation/${basename(datasetPath)}`, '--predictions_path', `/evaluation/${evaluationId}.jsonl`, '--run_id', evaluationId, '--max_workers', '1'], { timeout: 2_100_000 });
   } finally {
     for (const name of [graderName, instanceContainer]) {
       await processCommand(config.docker, ['rm', '-f', name], { capture: true }).catch(() => {});ownedContainers.delete(name);
@@ -149,8 +154,9 @@ if (action === 'init') {
   }
   const after = await get(hub);
   if (!before.sha || before.sha !== after.sha) throw Error('Dataset changed while downloading; retry in a new benchmark home');
-  const cases = selectCases(rows, config.seed, config.sample_size);
-  await save(join(home, 'cases.lock.json'), { schema: 1, dataset: config.dataset, dataset_revision_observed: before.sha, config: config.dataset_config, split: config.split, seed: config.seed, source_rows: rows.length, fetched_at: new Date().toISOString(), sha256: digest(cases), cases }, true);
+  const excludedIds = config.exclude_instance_ids ?? [];
+  const cases = selectCases(rows, config.seed, config.sample_size, excludedIds);
+  await save(join(home, 'cases.lock.json'), { schema: 1, dataset: config.dataset, dataset_revision_observed: before.sha, config: config.dataset_config, split: config.split, seed: config.seed, source_rows: rows.length, exclude_instance_ids: excludedIds, fetched_at: new Date().toISOString(), sha256: digest(cases), cases }, true);
   console.log(`Frozen ${cases.length} cases. Gold patches and test patches stay on the controller, outside agent containers.`);
 } else if (['plan', 'run', 'build', 'preflight'].includes(action)) {
   const config = await configuration(), lock = await frozen();
@@ -240,7 +246,12 @@ if (action === 'init') {
           await recordProgress({ current_trial: null });
           const eventText = await readFile(join(trialRoot, 'events.jsonl'), 'utf8').catch(() => '');
           const errors = eventText.split(/\r?\n/).filter(Boolean).flatMap(line => {
-            try { const event = JSON.parse(line);return ['error', 'turn.failed'].includes(event.type) ? [event] : []; } catch { return []; }
+            try {
+              const event = JSON.parse(line);
+              if (['error', 'turn.failed'].includes(event.type)) return [event];
+              const item = event.item;
+              return event.type === 'item.completed' && item?.type === 'command_execution' && item.exit_code !== 0 && nonretryableProviderFailure(item.aggregated_output) ? [item] : [];
+            } catch { return []; }
           });
           if (nonretryableProviderFailure([result.error, result.controller_error, errors])) {
             manifest.stopped = { at: new Date().toISOString(), trial: basename(trialRoot), reason: 'Nonretryable authentication, provider, or credit failure; remaining paid attempts were not started' };
@@ -305,7 +316,7 @@ if (action === 'init') {
         if (!patch.trim()) throw Error('No nonempty patch to grade; SWE-bench skips empty predictions. Resolution remains unknown.');
         Object.assign(result, await gradePatch(config, datasetPath, evalRoot, result.instance_id, result.arm, patch));
         result.grading_error = null;
-      } catch (error) { result.resolved = null;result.grading_error = error.message; }
+      } catch (error) { result.resolved = null;result.grading_error = error.message;process.exitCode = 1; }
       await save(join(trialDir, 'result.json'), result);
     }
   }

@@ -1,4 +1,313 @@
-# Benchmark findings — 2026-10-26
+# Benchmark findings
+
+## Django migration acceptance investigation — 2026-10-27
+
+The accepted django-15252 development patch and follow-ups exposed four review failures:
+
+- The supervisor turned the issue's suggested recorder guard into a required
+  mechanism before investigation, then treated its own brief as authorization
+  for changed behavior.
+- Ship made an existing migration test pass by granting its router an additional
+  recorder permission. Review accepted that altered setup instead of checking
+  the original witness. With only the production patch applied, the original
+  `test_migrate_fake_initial` passed on the baseline and failed on the candidate
+  with `table "migrations_tribble" already exists`. The new guard hid existing
+  migration history, causing migration execution to recreate the table.
+- The reported empty-plan test used a denied guard and an existing recorder
+  table. It did not exercise an allowed, fresh database through
+  `MigrationExecutor.migrate([], plan=[])`. An independent source-derived probe
+  reproduced table creation on that path. Subsequent review requested a fresh
+  allowed database but accepted `record_applied()` evidence instead: creating a
+  table for recording does not establish that an empty migration avoids it.
+- After requiring the exact public call, review tested it but treated the
+  baseline's unconditional table creation as the intended contract. That proves
+  the side effect already existed, not that empty work needs it. The source
+  comment describes the table's purpose as recording applied migrations; review
+  must also trace the initiating caller's disabled-work options rather than
+  promote the disputed implementation behavior into a compatibility requirement.
+
+The negative controls are saved in `.specship/migration-review-audit/`. Only
+production changes were applied, original test inputs were retained, and no
+held-out test patch was used. A separate review replay of the exact old candidate,
+original request, brief, and delivered report returned **REQUEST_CHANGES** and
+independently reproduced the original-router regression. Its evidence is in
+`.specship/migration-review-replay-26ff11b2/`; this is a review regression, not a
+new task score.
+
+The Spec and Ship skills now keep briefs outcome-based, prohibit using a
+self-authored brief to authorize fixture permission or history changes, and
+require resolving reproduced regressions under original inputs. Review witnesses
+identify the entry point, operation input, initial resource state, permission,
+and effect; a different creating helper cannot close an empty-operation gap.
+The acceptance tool description reinforces these rules. The benchmark prompt
+also permits focused verification for concrete evidence gaps instead of an
+absolute prohibition on repeating Ship tests. These are review instructions;
+the runner cannot prove the semantic truth of supplied evidence. Baseline
+reproduction of the disputed side effect now requires an independent intended
+contract or a decision, rather than acceptance based on baseline equality.
+
+Development attempts remain separate and preserved under
+`.specship/benchmark-review-counterexamples-2026-10-27/runs/`:
+
+| Run | Review behavior | Held-out result |
+|---|---|---|
+| `2026-10-27T09-01-27-699Z-118237f7` | Requested a correction, then self-authorized changed router inputs; accepted | Failed |
+| `2026-10-27T09-18-02-690Z-cb82057c` | Preserved original routers/history, but substituted recording evidence for the empty caller; accepted | Failed |
+| `2026-10-27T09-29-00-140Z-478f2865` | Tested exact empty caller, but treated baseline table creation as required behavior; accepted | Failed |
+| `2026-10-27T09-43-15-459Z-c3c80568` | Traced disabled-work caller and corrected concrete regressions in three rounds; accepted | **Resolved** |
+
+The third attempt also caught and corrected a real hinted-operation recording
+regression. Its original-router witness passes with production changes only, but
+the independent allowed/fresh/empty witness still fails; both observations are
+saved in `.specship/migration-review-same-entrypoint-audit/`. Catching that separate
+regression does not erase the false acceptance.
+
+The final caller-intent development run,
+`2026-10-27T09-43-15-459Z-c3c80568`, **resolved under the held-out evaluator** and
+accepted after three correction rounds, with zero false acceptances or grading
+errors in this one-case run.
+Review explicitly required the actual `create_test_db(TEST.MIGRATE=False)` path,
+including supported syncdb behavior, and preserved a supplied state on the empty
+executor path. It also reproduced and corrected missing historical model hints,
+field/model-name confusion, and inconsistent history for a denied dependency
+followed by permitted work. Original fixture permissions and assertions stayed
+unchanged. Ship's final relevant suite ran 655 tests successfully with one skip;
+new isolated regressions use SQLite.
+
+An independent production-only audit in `.specship/migration-review-fixed-audit/`
+passed both the original-router witness and the allowed/fresh/empty executor
+probe, retaining original tests and using no held-out test patch. Its baseline
+control also passed. Trial execution took 1,410.002 seconds and recorded $0.385964
+in API-equivalent usage under the frozen comparison tariff; this includes all
+three correction rounds and is not an actual billing claim.
+
+Repository validation after these changes: typecheck and build passed; the full
+suite run serially passed **176 tests with one platform skip**; both skills passed
+their validator. The serial run avoids a concurrent-load timing failure observed
+in the unchanged compatibility ping fixture; that fixture also passed separately.
+
+The historical ten-case comparison below is unchanged. These cases are already
+known development regressions and cannot establish unseen-task accuracy.
+
+## Acceptance repairs and fresh Verified sample — 2026-10-27
+
+**Structured reporting no longer blocked completion, but semantic false acceptance
+remains.** On ten fresh cases, direct supervision resolved 9/10 and Specship 8/10.
+Both accepted every patch, producing one and two false acceptances respectively.
+The measured images include the first review/evidence repairs. Counterexample and
+fixture-isolation review rules were refined after this result and validated only
+on separate development regressions, reported below; those are not fresh scores.
+
+Run `2026-10-27T06-28-33-012Z-41c76347` is saved under
+`.specship/benchmark-verified-2026-10-27/runs/`, with full evidence in `summary.json`,
+the manifest, per-trial exports, and evaluator reports. The controller exited 0:
+20/20 trials recorded and graded, no grading errors, no infrastructure or workflow
+failures. It ran 14:28–16:07 Asia/Taipei on October 27, including builds and grading.
+
+The new pool is [SWE-bench Verified](https://www.swebench.com/verified), a
+human-validated set of 500 tasks. Ten cases were selected with seed
+`specship-verified-v1-2026-10-27`, excluding all five previous case IDs before
+selection. Dataset revision: `78f471bf655a3137b2e8a75af1501690ec009ec3`.
+Frozen case hash: `c567dbc28508bd59015c6c149ee994ed45d5e2ecbeee6b9d1918c913b9d4c956`.
+No cases were replaced after freezing, and no scored model trials were retried.
+Both arms used Codex `gpt-6.1-sol` / high and OpenCode
+`deepseek/deepseek-flash` / high, alternating order, one repetition, and the same
+1,800-second trial limit and evaluator.
+
+| Metric | Direct Codex → OpenCode | Specship |
+|---|---:|---:|
+| Resolved by held-out evaluator | **9/10** | **8/10** |
+| Supervisor accepted | 10/10 | 10/10 |
+| False acceptances | 1 | 2 |
+| Infrastructure / workflow failures | 0 / 0 | 0 / 0 |
+| Sum of trial seconds | 2,133.483 | 2,652.342 |
+| Codex input tokens, including cached | 6,879,033 | 1,248,341 |
+| Codex output tokens | 33,354 | 14,084 |
+| Codex API-equivalent estimate | $1.9571 | $0.7138 |
+| Full API-equivalent estimate | Unknown; recorded subtotal $2.1588 | $0.9242 |
+
+Specship used about 82% fewer supervisor input tokens and 64% less estimated
+supervisor cost, while recorded trial time was about 24% longer. Direct worker
+usage is incomplete for Requests and scikit-learn-10297, so its full cost remains
+null; the subtotal includes known supervisor and observed worker usage. Specship
+worker usage is complete. Prices use the same frozen Sol Standard and DeepSeek
+Flash off-peak comparison tariff for both arms, not inferred live billing. Actual
+bills, service-tier/long-context premiums, and subscription-limit usage are unknown.
+
+| Case | Direct supervision | Specship |
+|---|---|---|
+| psf__requests-2931 | Resolved | Resolved |
+| django__django-14999 | Resolved | Resolved |
+| scikit-learn__scikit-learn-25931 | Resolved | Resolved |
+| scikit-learn__scikit-learn-10297 | Resolved | Resolved |
+| django__django-15252 | Failed, accepted | Failed, accepted |
+| sphinx-doc__sphinx-10449 | Resolved | Failed, accepted |
+| scikit-learn__scikit-learn-14894 | Resolved | Resolved |
+| pytest-dev__pytest-5262 | Resolved | Resolved |
+| pytest-dev__pytest-7324 | Resolved | Resolved |
+| django__django-14787 | Resolved | Resolved |
+
+For django-15252, both workflows missed migration-schema/no-migration behavior.
+The evaluator reports an unexpected `ensure_schema()` call under the disabled
+migration setting and failure of the no-migrations path; existing pass-to-pass
+tests did not regress. This is a remaining semantic review gap.
+
+For Sphinx, Specship passed the new held-out bug test but failed three existing
+autodoc output tests. Its patch added a `Square` class to a shared fixture and
+updated expected output lists in the test file. Evaluation resets that test file
+before applying held-out tests, leaving the extra fixture class without those
+paired expectation changes. Failures show the extra `Square` output. This is a
+test-fixture/evaluation interaction, but it remains a failed result and false
+acceptance in the published counts; it was not rescored or repaired.
+
+### What changed and what was verified
+
+- Ready reports are now checked for complete, nonblank, unique, known criterion
+  IDs **before** persistence. Rejected reports can be repaired in the same session;
+  final acceptance retains the same coverage guard. Prose cannot stand in for
+  required structured results. The native DeepSeek callback schema now exposes
+  `acceptance_results`, matching the MCP transport.
+- Spec and Ship now trace behavioral assumptions to unchanged source or the
+  request, check repository API/test-seam compatibility, and request corrections
+  for unsupported assumptions. These changes address the previous overly narrow
+  diff/test-summary review; they do not guarantee semantic correctness.
+- Eight Specship trials encountered recoverable report-schema errors because
+  they omitted redundant legacy `acceptance_evidence` prose despite supplying
+  structured results. All recovered and completed acceptance. **After model
+  execution**, that legacy array was made optional with an empty default, verified
+  through the real MCP callback and full tests. Recorded timings, tokens, and
+  costs include the original retries and were not adjusted. The final normalization
+  change has unit/integration validation, not a separately rerun quality benchmark.
+- Fresh samples support recorded exclusions. Prepared task images are restored
+  to the frozen source commit when necessary; Sphinx required restoration of its
+  prepared `tox.ini` edit. Both arms received the same source. Registry DNS failures
+  were handled with model-free image preparation and an exact cached evaluator
+  image, `sha256:ad4814e3e92bc36327104dbc8030c2352d30b0839fa0001f9818dc06ca93bcec`,
+  whose SWE-bench 5.0.2 version was verified. Incomplete grading now exits nonzero
+  and preserves diagnostics instead of silently reporting completion.
+- Validation: typecheck and build passed; full suite **176 passed, 1 platform
+  skip**. Both edited skills passed the skill validator. Missing/blank/duplicate/
+  unknown evidence, structured-only reports, native callbacks, same-session repair,
+  and disposable source restoration have regression coverage.
+
+### Targeted follow-up after the scored comparison
+
+The two fresh-set failures were then used explicitly as development regressions,
+without changing the ten-case comparison. Review now asks for an independently
+derived disconfirming case, traces denied/empty/no-op paths when side effects are
+forbidden, and keeps new regression data isolated from unrelated shared-fixture
+outputs. These are general workflow instructions, not task-specific fixes or
+held-out test details supplied to Ship.
+
+Run `2026-10-27T08-14-13-944Z-27424e8a` in
+`.specship/benchmark-review-counterexamples-2026-10-27/runs/` completed and graded
+both development cases with the final reporting normalization and review rules:
+
+| Development case | Held-out result | Acceptance |
+|---|---|---|
+| sphinx-doc__sphinx-10449 | **Resolved** | Accepted |
+| django__django-15252 | **Failed** | Accepted |
+
+The Sphinx follow-up used scoped regression data and passed the evaluator. The
+migration follow-up again reported broad passing tests but failed held-out grading.
+Both workflow completions were valid, no infrastructure/grading errors occurred,
+and complete API-equivalent usage totaled $0.2720. These results demonstrate the
+fixture repair and the remaining semantic review gap; they are not substituted
+into the original 8/10 score and do not establish final-version unseen accuracy.
+
+Two separate development attempts on old django-11848 are retained in
+`.specship/benchmark-review-regression-2026-10-27/runs/`
+(`2026-10-27T05-50-17-924Z-94b5cb63` and `2026-10-27T06-02-25-803Z-f6ccbb26`).
+Both used UTC and complete structured reports but remained **failed, accepted**
+under the official evaluator, whose clock mocks configure `utcnow()` while the
+patches use `now(timezone.utc)`. A separate API-neutral New Year contract check
+returned the expected 2075/1976 years; a local-clock counterfactual returned
+1975/1976 and was rejected. That check confirms the original timezone defect is
+addressed but does not replace either failed benchmark grade. Its script and
+numeric evidence are saved in the same development home.
+
+The reporting lifecycle failure is fixed. Semantic false acceptance is **not
+solved**, and this experiment does not support claiming otherwise. Ten cases and
+one repetition do not establish a general ranking or a causal quality improvement
+over the different earlier sample. Public-task contamination/network caveats still
+apply, and recovery/interruption behavior was not measured.
+
+## Direct OpenCode supervision — 2026-10-27
+
+**This pilot favors direct supervision for correctness and Specship for supervisor
+usage. It does not establish a general ranking.**
+
+Run `2026-10-26T20-21-11-340Z-d7917df3` is saved under
+`.specship/benchmark-direct-2026-10-27/runs/`. Its `summary.json` contains all ten
+graded results; the manifest freezes configuration, ordering, revision, and dirty
+working-tree status. The controller exited 0 after grading, with no grading errors
+or infrastructure failures. It ran from 20:21 to 21:14 UTC on October 26 (October 27
+in Asia/Taipei), including builds and evaluation.
+
+The comparison uses the same five previously frozen SWE-bench Lite cases, one
+repetition, Codex `gpt-6.1-sol` / high, OpenCode `deepseek/deepseek-flash` / high,
+and a 1,800-second trial limit. Both arms run fresh against the current working-tree
+snapshot, including the pre-existing compact-review changes; earlier benchmark
+results are not substituted. Toolchain versions match the earlier run below.
+
+The new `codex-opencode` arm tells Codex to launch OpenCode through the shell,
+continue the native session for corrections, review the diff and test evidence,
+and finish with an explicit acceptance/blocker verdict. It supplies the exact CLI
+invocation and comparable lean-supervision instructions. There is no Specship MCP
+registration or installed project skill in this arm. Model-free catalog/profile
+preflight, case isolation, permissions, and grading remain benchmark infrastructure
+shared with the Specship arm. Arm order alternates across cases. Durable OpenCode
+usage verifies delegation and the configured worker model.
+
+| Metric | Direct Codex → OpenCode | Specship |
+|---|---:|---:|
+| Resolved by held-out evaluator | **5/5** | **4/5** |
+| Supervisor accepted | 5/5 | 4/5 |
+| Both accepted and resolved | 5/5 | 3/5 |
+| False acceptances | 0 | 1 |
+| Agent/workflow failures | 0 | 1 |
+| Sum of trial seconds | 1,268.948 | 1,235.370 |
+| Codex input tokens (including cached) | 6,104,454 | 460,732 |
+| Codex output tokens | 23,482 | 5,135 |
+| Codex API-equivalent estimate | $1.3682 | $0.2021 |
+| Full API-equivalent estimate | Unknown; recorded subtotal $1.5083 | $0.3123 |
+
+Specship used about 92% fewer supervisor input tokens and 85% less estimated
+supervisor cost. Summed trial time differed by only 34 seconds. Direct supervision's
+pytest trial interrupted an initial worker session; incomplete durable message
+accounting leaves its full worker usage and total cost null. The $1.5083 figure is
+a subtotal from known supervisor and observed worker usage at frozen rates, not a
+complete total or invoice. Specship worker usage is complete. Published Sol Standard
+and direct DeepSeek Flash off-peak tariffs were checked on October 27; all trials
+finished within the off-peak window. Actual bills and subscription-limit consumption
+remain unknown.
+
+| Case | Direct supervision | Specship |
+|---|---|---|
+| pydata__xarray-5131 | Resolved, accepted | Resolved, accepted |
+| pytest-dev__pytest-11148 | Resolved, accepted | Resolved, accepted |
+| django__django-11848 | Resolved, accepted | Failed, accepted |
+| matplotlib__matplotlib-25311 | Resolved, accepted | Resolved, accepted |
+| django__django-15902 | Resolved, accepted | Resolved, acceptance blocked |
+
+Two failures matter. For django-11848, Specship again accepted `datetime.now()`
+where the HTTP-date calculation requires UTC; direct supervision used `utcnow()`.
+The evaluator confirms the same false-acceptance defect discussed below. For
+django-15902, Specship produced a passing patch but its report lacked structured
+evidence for `management-warning`, `rendering-compatibility`, and `validation`.
+Textual evidence was present, but `specship_accept` returned nonretryable
+`ACCEPTANCE_EVIDENCE_INCOMPLETE`; the supervisor stopped with the run awaiting review.
+This is an unfinished workflow, separately from patch correctness. These trial
+artifacts were not repaired or rerun to improve the scores.
+
+The measured benefit is lower supervisor usage, not better correctness or a clear
+speed improvement. Five cases and one repetition leave substantial uncertainty;
+public tasks with network access retain the contamination caveats below. This
+experiment does not test restart recovery, conflicting writers, or interruption
+guarantees. The reusable comparison is configured with
+`arms: ["codex-opencode", "specship"]`.
+
+## Earlier lean-orchestration run — 2026-10-26
 
 Fresh lean-orchestration run of the frozen SWE-bench Lite sample, compared with the
 2026-10-25 baseline. This records what was measured, what the numbers mean, the defect

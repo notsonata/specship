@@ -4,10 +4,43 @@ import { mkdtemp, readFile, writeFile, realpath, rm, mkdir } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { apiEstimate, codexUsage, digest, quotaDelta, selectCases, shipUsage, summarize, treeContents, trialEstimate } from '../scripts/benchmark/accounting.mjs';
+import { arms, defaultArms, usesSpec, usesShip, usesOpenCodeShip, usesDshShip, apiEstimate, codexUsage, digest, quotaDelta, selectCases, shipUsage, summarize, treeContents, trialEstimate } from '../scripts/benchmark/accounting.mjs';
 import { checkSubscriptions, subscriptionCredential, subscriptionEnvironment } from '../scripts/benchmark/auth.mjs';
 import { checkShipProfile, checkDshProfile } from '../scripts/benchmark/profile.mjs';
 import { nonretryableProviderFailure, orderedArms } from '../scripts/benchmark/safety.mjs';
+import { directPrompt, directAcceptance } from '../scripts/benchmark/direct.mjs';
+import { prepareBase } from '../scripts/benchmark/base.mjs';
+
+test('direct supervision counts both models, including corrections, without changing default arms', () => {
+  assert.ok(arms.includes('codex-opencode'));
+  assert.deepEqual(defaultArms, ['codex', 'specship']);
+  assert.equal(usesSpec('codex-opencode'), true);assert.equal(usesShip('codex-opencode'), true);
+  assert.equal(usesOpenCodeShip('codex-opencode'), true);assert.equal(usesDshShip('codex-opencode'), false);
+  const spec = codexUsage([{ type: 'turn.completed', usage: { input_tokens: 100, cached_input_tokens: 80, output_tokens: 20 } }]);
+  const messages = ['initial', 'correction'].map(id => ({ info: { id, sessionID: 'worker', role: 'assistant', tokens: { input: 10, output: 20, reasoning: 5, cache: { read: 80, write: 4 } }, cost: 0.03 } }));
+  const ship = shipUsage([{ messages }], { reasoningIsSeparate: true });
+  const rates = { input: 2, cached_input: 0.1, cache_write: 2.5, output: 10, reasoning_is_separate: true };
+  const costs = trialEstimate({ arm: 'codex-opencode', spec_usage: spec, ship_usage: ship }, { spec: { rates }, ship: { rates } });
+  assert.equal(costs.api_equivalent_usd, apiEstimate(spec, rates, 'spec') + apiEstimate(ship, rates, 'ship'));
+  assert.equal(ship.assistant_messages, 2);
+  assert.equal(trialEstimate({ arm: 'codex-opencode', spec_usage: spec, ship_usage: null }, { spec: { rates }, ship: { rates } }).api_equivalent_usd, null);
+  const summary = summarize([{ arm: 'codex-opencode', spec_usage: spec, ship_usage: ship, accepted: true, resolved: false, ...costs }], ['codex-opencode'])[0];
+  assert.equal(summary.false_acceptances, 1);assert.equal(summary.spec_tokens.input, 100);assert.equal(summary.ship_tokens.assistant_messages, 2);
+});
+
+test('direct review requires an explicit final supervisor verdict, never a worker or command marker', () => {
+  const message = text => ({ type: 'item.completed', item: { type: 'agent_message', text } });
+  assert.equal(directAcceptance([]), null);
+  assert.equal(directAcceptance([{ type: 'item.completed', item: { type: 'command_execution', aggregated_output: 'BENCHMARK_REVIEW: ACCEPTED' } }]), null);
+  assert.equal(directAcceptance([message('BENCHMARK_REVIEW: ACCEPTED'), message('Still investigating')]), null);
+  assert.equal(directAcceptance([message('Reviewed the diff and tests.\nBENCHMARK_REVIEW: ACCEPTED\n')]), true);
+  assert.equal(directAcceptance([message('BENCHMARK_REVIEW: BLOCKED')]), false);
+  assert.equal(directAcceptance([message('BENCHMARK_REVIEW: ACCEPTED but tests failed')]), null);
+  const prompt = directPrompt('Fix the bug', { model: 'provider/model', effort: 'high' });
+  assert.match(prompt, /'--model' 'provider\/model' '--variant' 'high'/);
+  assert.match(prompt, /--session SESSION_ID/);assert.match(prompt, /Do not implement the fix yourself/);
+  assert.match(prompt, /Do not use Specship/);
+});
 
 test('paid trials stop on permanent provider errors and Ship-first retains each planned trial once', () => {
   for (const error of ['HTTP 401 api_key_expired', { statusCode: 402 }, 'insufficient_balance', 'Ship model unavailable after catalog refresh']) assert.equal(nonretryableProviderFailure(error), true);
@@ -75,11 +108,36 @@ test('subscription mode rejects API credentials, strips environment overrides an
   assert.deepEqual(summarize([], ['codex', 'specship']).map(row => row.arm), ['codex', 'specship']);
 });
 
-test('prepared image mode changes are allowed but source content/path changes are rejected', () => {
+test('prepared image tree comparison tolerates modes and detects source content/path changes', () => {
   const base = ['100644 blob abc\tsource.py', '100644 blob def\tfile with spaces', ''].join('\0');
   assert.deepEqual(treeContents(base), treeContents(base.replaceAll('100644', '100755')));
   assert.notDeepEqual(treeContents(base), treeContents(base.replace('abc', 'fff')));
   assert.notDeepEqual(treeContents(base), treeContents(base.replace('source.py', 'other.py')));
+});
+
+test('prepared source drift is restored to the frozen base while untracked build artifacts survive', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'specship-benchmark-base-'));
+  t.after(async () => { const path = await realpath(root);assert.equal(dirname(path), await realpath(tmpdir()));assert.ok(basename(path).startsWith('specship-benchmark-base-'));await rm(path, { recursive: true, force: true }); });
+  const command = (exe, args) => {
+    const result = spawnSync(exe, args, { cwd: root, encoding: 'utf8', windowsHide: true });
+    assert.equal(result.status, 0, result.stderr);return result.stdout;
+  };
+  command('git', ['init', '-q']);
+  command('git', ['config', 'core.autocrlf', 'false']);
+  command('git', ['config', 'user.email', 'benchmark@localhost']);command('git', ['config', 'user.name', 'Benchmark']);
+  await writeFile(join(root, 'source.py'), 'original source\n');
+  command('git', ['add', 'source.py']);command('git', ['commit', '-qm', 'base']);
+  const base = command('git', ['rev-parse', 'HEAD']).trim();
+  await writeFile(join(root, 'source.py'), 'prepared source edit\n');
+  await writeFile(join(root, 'prepared-only.py'), 'not task source\n');
+  command('git', ['add', '-A']);command('git', ['commit', '-qm', 'prepared']);
+  const prepared = command('git', ['rev-parse', 'HEAD']).trim();
+  await writeFile(join(root, 'compiled-build-artifact'), 'installed environment artifact');
+  assert.deepEqual(prepareBase(command, base), { image_head: base, prepared_image_head: prepared, base_restored: true });
+  assert.equal(await readFile(join(root, 'source.py'), 'utf8'), 'original source\n');
+  await assert.rejects(readFile(join(root, 'prepared-only.py')), { code: 'ENOENT' });
+  assert.equal(await readFile(join(root, 'compiled-build-artifact'), 'utf8'), 'installed environment artifact');
+  assert.equal(prepareBase(command, base).base_restored, false);
 });
 
 test('case selection is deterministic, order independent, and rejects duplicate/unsafe instances', () => {
@@ -88,6 +146,17 @@ test('case selection is deterministic, order independent, and rejects duplicate/
   assert.throws(() => selectCases([...rows, rows[0]], 'seed', 4));
   assert.throws(() => selectCases([{ ...rows[0], instance_id: '../escape' }], 'seed', 1));
   assert.throws(() => selectCases(rows, 'seed', 0));
+});
+
+test('a new sample excludes earlier instances before deterministic selection and records no substitutes silently', () => {
+  const excluded = selectCases(rows, 'old', 5).map(row => row.instance_id);
+  const fresh = selectCases(rows, 'new', 7, excluded);
+  assert.equal(fresh.length, 7);
+  assert.ok(fresh.every(row => !excluded.includes(row.instance_id)));
+  assert.deepEqual(fresh, selectCases([...rows].reverse(), 'new', 7, excluded));
+  assert.throws(() => selectCases(rows, 'new', 8, excluded), /sample size/);
+  assert.throws(() => selectCases(rows, 'new', 1, [excluded[0], excluded[0]]), /excluded/);
+  assert.throws(() => selectCases(rows, 'new', 1, ['../unsafe']), /excluded/);
 });
 
 test('Codex usage counts completed turns once, includes cached input, and leaves HTTP requests unknown', () => {
@@ -162,7 +231,17 @@ test('benchmark CLI preserves configuration, defaults to dry runs, and detects c
   const finishDry = cli('run', '--finish');assert.equal(finishDry.status, 0);assert.equal(JSON.parse(finishDry.stdout.split('Dry run only.')[0]).finish_after_run, true);assert.match(finishDry.stdout, /"paid_calls_enabled": false/);
   await assert.rejects(readFile(join(home, 'runs'), 'utf8'), { code: 'ENOENT' }, '--finish alone must not execute or grade any trial');
   const plan = JSON.parse(cli('plan').stdout);assert.deepEqual(plan.arms, ['codex', 'specship']);assert.equal(plan.authentication, 'subscription');
+  await writeFile(join(home, 'config.json'), JSON.stringify({ ...JSON.parse(original), grader_image_id: 'mutable:tag' }));
+  assert.match(cli('plan').stderr, /exact local SHA-256 image ID/);
+  await writeFile(join(home, 'config.json'), original);
   const config = JSON.parse(original);config.spec.model = 'gpt-6.1-sol';config.ship.model = 'openai/gpt-6-luna';
+  config.arms = ['specship', 'codex-opencode'];
+  await writeFile(join(home, 'config.json'), JSON.stringify(config));
+  const directPlan = JSON.parse(cli('run', '--finish').stdout.split('Dry run only.')[0]);
+  assert.deepEqual(directPlan.arms, ['specship', 'codex-opencode']);assert.equal(directPlan.attempts, 4);
+  assert.equal(directPlan.paid_calls_enabled, false);
+  assert.deepEqual(directPlan.trials.map(trial => trial.arm), ['specship', 'codex-opencode', 'codex-opencode', 'specship']);
+  await writeFile(join(home, 'config.json'), original);
   const codexFile = join(home, 'codex-auth.json'), opencodeFile = join(home, 'opencode-auth.json');
   await writeFile(codexFile, JSON.stringify({ auth_mode: 'chatgpt', tokens: { access_token: 'fixture-access' } }));
   await writeFile(opencodeFile, JSON.stringify({ openai: { type: 'oauth', access: 'fixture-access' } }));

@@ -167,6 +167,37 @@ test('production MCP stdio registers six tools and routes exact caller/handle th
   const paused=JSON.parse((await pending).content[0].text);assert.equal(paused.kind,'paused');assert.equal(paused.payload.stop_confirmed,true);
 });
 
+test('production MCP compacts review delivery and replay while full evidence remains inspectable and acceptable',async t=>{
+  let transport;t.after(async()=>{await transport?.close();});
+  const workspace=await temp(t,'specship-mcp-review-');
+  transport=new StdioClientTransport({command:process.execPath,args:[fileURLToPath(new URL('./mcp-server.mjs',import.meta.url)),workspace]});
+  const client=new Client({name:'review-test',version:'1'});await client.connect(transport);
+  const meta={threadId:'review-thread','x-codex-turn-metadata':JSON.stringify({turn_id:'review-turn'})};
+  const args={workspace,operation_id:'report',kind:'implement',brief:{...brief,acceptance_criteria:[{id:'A1',text:'observed'}]}};
+  const call=async(name,args)=>{const result=await client.callTool({name,arguments:args,_meta:meta});assert.notEqual(result.isError,true,result.content[0].text);return JSON.parse(result.content[0].text);};
+  const event=await call('specship_dispatch',args);
+  assert.equal(event.kind,'implementation_ready');
+  assert.equal(event.payload.report.changes[0].length,1_001);
+  assert.deepEqual(event.payload.report.acceptance_evidence,[]);
+  assert.deepEqual(event.payload.report.remaining_issues,['review this limitation']);
+  assert.ok(event.payload.truncated_fields.includes('report.changes[0]'));
+  const state=JSON.parse(await readFile(event.payload.evidence_ref.state_path,'utf8'));
+  assert.equal(state.report_id,event.report_id);
+  assert.equal(state.report.changes[0].length,2_000);
+  const full=await call('specship_inspect',{workspace,run_id:event.run_id,section:'evidence',purpose:'review'});
+  assert.deepEqual(full,state.report);
+  const replay=await call('specship_dispatch',{...args,run_id:event.run_id,supervisor_handle:event.supervisor_handle});
+  assert.equal(replay.event_id,event.event_id);
+  assert.deepEqual(replay.payload,event.payload);
+  for(const recover of [false,true]){
+    const attached=await call('specship_wait',{run_id:event.run_id,supervisor_handle:event.supervisor_handle,recover});
+    assert.equal(attached.event_id,event.event_id);
+    assert.deepEqual(attached.payload,event.payload);
+  }
+  const accepted=await call('specship_accept',{run_id:event.run_id,activity_id:event.activity_id,report_id:event.report_id,brief_version:event.brief_version,supervisor_handle:event.supervisor_handle,evidence:'Reviewed A1, full truncated changes and the stated limitation against the diff.'});
+  assert.equal(accepted.accepted,true);
+});
+
 test('production MCP rejects native grants even with a model-supplied human approval assertion',async t=>{
   let transport;t.after(async()=>{await transport?.close();});
   const workspace=await temp(t,'specship-mcp-permission-');transport=new StdioClientTransport({command:process.execPath,args:[fileURLToPath(new URL('./mcp-server.mjs',import.meta.url)),workspace]});const client=new Client({name:'permission-test',version:'1'});await client.connect(transport);

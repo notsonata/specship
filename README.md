@@ -58,7 +58,7 @@ flowchart LR
 1. **Plan.** Spec settles intent and consequential decisions; Ship handles repository investigation.
 2. **Brief.** Spec sends Ship a bounded assignment: outcome, boundaries, and acceptance.
 3. **Build.** Ship implements, tests, and handles routine debugging. If it needs a consequential decision, it asks Spec and waits.
-4. **Review.** Spec reviews the delivered criterion evidence, runner check summaries, and a targeted diff once, then accepts or sends a concrete correction. Spec does not routinely rerun Ship's tests or fetch the same report again. Full logs remain on disk; a quiet wait needs no model generations.
+4. **Review.** Spec reviews the delivered criterion evidence, runner check summaries, actual diff, and targeted unchanged source to establish the behavior contract independently of new tests or mocks. It accepts or sends a concrete correction. A ready report missing required structured criterion evidence is rejected before saving so Ship can repair it in the same session; duplicate legacy prose is optional. Reports omit duplicate evidence and successful check output, and flag shortened narrative previews with `truncated_fields`. Full reports and check results remain in the state file named by `evidence_ref`; Spec reads omitted evidence when needed before accepting. Failures, deviations, and remaining issues are delivered intact. Spec does not routinely rerun Ship's tests or fetch the same report again; a quiet wait needs no model generations.
 
 ## Quick start
 

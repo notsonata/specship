@@ -67,7 +67,7 @@ export function apply(ctx: any): void {
 
   ctx.tools.register({
     name: 'report_result',
-    description: 'Submit a structured exploration result or final implementation report to the Spec supervisor.',
+    description: 'Submit a structured exploration result or implementation report. ready_for_review requires acceptance_results with one {criterion_id,evidence} per exact brief criterion ID. Repair and resubmit rejected reports; prose alone does not cover criteria.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -76,6 +76,7 @@ export function apply(ctx: any): void {
         status: { type: 'string', enum: ['ready_for_review', 'needs_decision', 'unable_to_continue'] },
         changes: { type: 'array', items: { type: 'string' } },
         acceptance_evidence: { type: 'array', items: { type: 'string' } },
+        acceptance_results: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { criterion_id: { type: 'string', minLength: 1 }, evidence: { type: 'string', minLength: 1 } }, required: ['criterion_id', 'evidence'] } },
         validation: { type: 'array', items: { type: 'string' } },
         deviations: { type: 'array', items: { type: 'string' } },
         remaining_issues: { type: 'array', items: { type: 'string' } },

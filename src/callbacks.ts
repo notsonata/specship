@@ -1,7 +1,7 @@
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Store, RunState } from './state.js';
-import { Report } from './contracts.js';
+import { Report, acceptanceEvidenceIssues, type Brief } from './contracts.js';
 import { materializeArtifacts, verifyArtifact, MAX_ARTIFACT_BYTES } from './artifacts.js';
 import { checkpoint } from './workspace.js';
 import { setPhase } from './policy.js';
@@ -83,6 +83,10 @@ export class CallbackHub {
             const parsed = Report.safeParse(body);
             if (!parsed.success) throw new Error('Invalid report schema');
             if(this.state.activity_kind==='explore'&&'status'in parsed.data||this.state.activity_kind!=='explore'&&!('status' in parsed.data))throw new Error('Report does not match the current activity kind');
+            if ('status' in parsed.data && parsed.data.status === 'ready_for_review') {
+              const issues = acceptanceEvidenceIssues((this.state.brief as Brief | undefined)?.acceptance_criteria ?? [], parsed.data.acceptance_results ?? []);
+              if (issues.length) throw new Error(`Incomplete acceptance_results (${issues.join('; ')}). Report was not saved. Resubmit with one {criterion_id, evidence} entry per brief criterion; acceptance_evidence prose does not replace these entries.`);
+            }
             const report='artifacts'in parsed.data&&parsed.data.artifacts?{...parsed.data,artifacts:await materializeArtifacts(this.store.workspace,parsed.data.artifacts)}:parsed.data;
             if(this.state.report){if(JSON.stringify(this.state.report)!==JSON.stringify(report))throw new Error('A report is already submitted for this activity');await this.store.save(this.state);if(!res.destroyed)res.writeHead(200).end('{}');return;}
             this.state.report = report;

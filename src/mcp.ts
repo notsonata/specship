@@ -1,11 +1,12 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { Runner } from './runner.js';
 import type { Store } from './state.js';
-import { ArtifactInput, Brief } from './contracts.js';
+import { ArtifactInput, Brief, type MaterialEvent } from './contracts.js';
 import { toToolError } from './errors.js';
+import { compactReviewEvent } from './review.js';
 
 const output = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }] });
 const guarded = <A, R>(fn: (args: A, extra: any) => Promise<R>) => async (args: A, extra: any) => {
@@ -28,6 +29,7 @@ async function owned(runner: Runner, runId: string, handle: string, extra: any):
 
 export async function serveSpec(runner: Runner, store: Store): Promise<void> {
   const server = new McpServer({ name: 'specship', version: '1.0.0' });
+  const eventOutput = (event: MaterialEvent) => output(compactReviewEvent(event, join(store.runDir(event.run_id), 'state.json')));
   server.registerTool('specship_dispatch', {
     description: 'Delegate investigation, coding, and tests to Ship with a compact brief; block until a result or consequential blocker. Expect minutes while Ship works: this returns as soon as a material event exists, so do not poll, sleep, or narrate progress. No parallel supervisor work is needed.',
     inputSchema: {
@@ -40,19 +42,19 @@ export async function serveSpec(runner: Runner, store: Store): Promise<void> {
     workspaceMatches(args.workspace, store.workspace);
     requiredCaller(extra);
     if (args.run_id) await owned(runner, args.run_id, args.supervisor_handle ?? '', extra);
-    return output(await runner.dispatch(args as any, caller(extra), extra.signal));
+    return eventOutput(await runner.dispatch(args as any, caller(extra), extra.signal));
   }));
   server.registerTool('specship_reply', {
     description: 'Persist one exact decision answer and block until the next material event. Native permission requests accept reject only; human grants cannot be supplied through this tool.',
     inputSchema: { run_id: z.string(), request_id: z.string(), operation_id: z.string(), answer: z.string(), expected_brief_version: z.number().int(), supervisor_handle: z.string(), brief: Brief.optional(), defer_to_user: z.boolean().optional() },
-  }, guarded(async (args, extra) => { await owned(runner, args.run_id, args.supervisor_handle, extra); return output(await runner.reply(args as any, caller(extra), extra.signal)); }));
+  }, guarded(async (args, extra) => { await owned(runner, args.run_id, args.supervisor_handle, extra); return eventOutput(await runner.reply(args as any, caller(extra), extra.signal)); }));
   server.registerTool('specship_wait', {
     description: 'Attach to an exact run and block for a material event; never submits work.',
     inputSchema: { run_id: z.string(), last_event_id: z.string().optional(), recover: z.boolean().optional(), supervisor_handle: z.string() },
   }, guarded(async (args, extra) => {
-    if(args.recover)return output(await runner.recover(args.run_id,args.supervisor_handle,requiredCaller(extra),extra.signal));
+    if(args.recover)return eventOutput(await runner.recover(args.run_id,args.supervisor_handle,requiredCaller(extra),extra.signal));
     await owned(runner,args.run_id,args.supervisor_handle,extra);
-    return output(await runner.wait(args.run_id,args.supervisor_handle,caller(extra),extra.signal,args.last_event_id,false));
+    return eventOutput(await runner.wait(args.run_id,args.supervisor_handle,caller(extra),extra.signal,args.last_event_id,false));
   }));
   server.registerTool('specship_inspect', {
     description: 'Inspect evidence missing from the delivered event or list recovery candidates. The result event already contains the report and check summary; do not fetch them again or poll status.',
@@ -83,7 +85,7 @@ export async function serveSpec(runner: Runner, store: Store): Promise<void> {
     inputSchema: { run_id: z.string(), operation_id: z.string(), action: z.enum(['pause', 'resume', 'cancel']), reason: z.string(), supervisor_handle: z.string() },
   }, guarded(async (args, extra) => { await owned(runner, args.run_id, args.supervisor_handle, extra); return output(await runner.control(args as any, caller(extra), extra.signal)); }));
   server.registerTool('specship_accept', {
-    description: 'Accept the exact idle report after one focused review against the original request and actual changes. Use delivered criterion evidence and runner checks; do not routinely rerun Ship tests. Unresolved defects or missing evidence still block acceptance.',
+    description: 'Accept the exact idle report against the original request and caller contracts. Match review witnesses to the entry point, input, resource state, and permission; a creating helper does not cover an empty public operation. Trace the initiating caller and disabled-work options. Baseline reproduction of the disputed side effect does not establish intended behavior or justify initialization without work. Preserve original test inputs unless their exact change is user-authorized; a self-authored brief is not authority. Unresolved intent or missing witnesses require correction or a decision. Do not routinely rerun tests.',
     inputSchema: { run_id: z.string(), activity_id: z.string(), report_id: z.string(), brief_version: z.number().int(), evidence: z.string().min(1), supervisor_handle: z.string() },
   }, guarded(async (args, extra) => { await owned(runner, args.run_id, args.supervisor_handle, extra); await runner.accept(args.run_id, args.activity_id, args.report_id, args.brief_version, args.evidence); return output({ accepted: true }); }));
   const transport=new StdioServerTransport();

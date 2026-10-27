@@ -1,10 +1,12 @@
 // Runs only inside a disposable benchmark container. No controller files are mounted.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, writeFile, readFile, readdir, cp, rm, open } from 'node:fs/promises';
-import { codexUsage, shipUsage, trialEstimate, treeContents, usesSpec, usesShip, usesOpenCodeShip, usesDshShip } from './accounting.mjs';
+import { codexUsage, shipUsage, trialEstimate, usesSpec, usesShip, usesOpenCodeShip, usesDshShip } from './accounting.mjs';
 import { subscriptionCredential, subscriptionEnvironment } from './auth.mjs';
 import { checkShipProfile, checkDshProfile } from './profile.mjs';
 import { readShipUsage, applyShipUsage } from './usage.mjs';
+import { directPrompt, directAcceptance } from './direct.mjs';
+import { prepareBase } from './base.mjs';
 
 const root = '/testbed', output = '/benchmark-output';
 if (process.platform !== 'linux' || process.cwd() !== root) throw Error('Benchmark agent runs only inside its Linux /testbed container');
@@ -14,20 +16,12 @@ function command(executable, args, options = {}) {
   return result.stdout;
 }
 function jsonLines(text) { return text.split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line)); }
-function verifyBase(baseCommit) {
-  const head = command('git', ['rev-parse', 'HEAD']).trim();
-  const expected = treeContents(command('git', ['ls-tree', '-rz', baseCommit]));
-  const actual = treeContents(command('git', ['ls-tree', '-rz', 'HEAD']));
-  if (JSON.stringify(expected) !== JSON.stringify(actual)) throw Error(`Image content differs from the declared base commit: ${baseCommit}`);
-  command('git', ['-c', 'core.fileMode=false', 'diff', '--quiet']);
-  return head;
-}
 await mkdir(output, { recursive: true });
 let input = ''; for await (const chunk of process.stdin) input += chunk;
 const task = JSON.parse(input);
 if (task.preflight === true) {
-  const head = verifyBase(task.base_commit);
-  console.log(JSON.stringify({ preflight: true, base_commit: task.base_commit, image_head: head, base_contents_verified: true, node: process.version, codex: command('codex', ['--version']).trim(), opencode: command('opencode', ['--version']).trim(), dsh: command('dsh', ['--version']).trim(), model_calls: 0 }));
+  const base = prepareBase(command, task.base_commit);
+  console.log(JSON.stringify({ preflight: true, base_commit: task.base_commit, ...base, base_contents_verified: true, node: process.version, codex: command('codex', ['--version']).trim(), opencode: command('opencode', ['--version']).trim(), dsh: command('dsh', ['--version']).trim(), model_calls: 0 }));
   process.exit(0);
 }
 const started = Date.now();
@@ -44,7 +38,7 @@ try {
       await writeFile(path, JSON.stringify(data), { mode: 0o600 });
     }
   }
-  result.image_head = verifyBase(task.base_commit);result.base_commit = task.base_commit;
+  Object.assign(result, prepareBase(command, task.base_commit));result.base_commit = task.base_commit;
   const tracked = command('git', ['ls-files', '-z']);
   // Retain the supplied worktree but remove history that could expose the reference fix.
   await rm('/testbed/.git', { recursive: true, force: true });
@@ -76,7 +70,7 @@ try {
   // The standard SWE-bench Python instance images use this conda environment.
   process.env.PATH = `/opt/miniconda3/envs/testbed/bin:${process.env.PATH}`;
   if (task.auth_mode !== 'subscription' && !process.env.CODEX_API_KEY && process.env.OPENAI_API_KEY) process.env.CODEX_API_KEY = process.env.OPENAI_API_KEY;
-  process.env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: { '*': 'allow', task: 'deny', webfetch: 'deny' } });
+  process.env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: { '*': 'allow', task: 'deny', question: 'deny', webfetch: 'deny' } });
   let executable, args;
   const prompt = `${task.problem_statement}\n\nImplement the requested fix in this repository and run relevant existing tests. Do not search for upstream fixes or access benchmark solutions. Do not delegate to subagents. Do not ask for human input; report unresolved ambiguity. Do not commit your changes.`;
   if (task.arm === 'ship') {
@@ -98,7 +92,7 @@ try {
       const config = { 'features.code_mode.direct_only_tool_namespaces': ['mcp__specship'], 'mcp_servers.specship.command': process.execPath, 'mcp_servers.specship.args': ['/opt/specship/dist/cli.js', 'serve', root], 'mcp_servers.specship.required': true, 'mcp_servers.specship.tool_timeout_sec': task.timeout_seconds + 120 };
       for (const [key, value] of Object.entries(config)) args.push('-c', `${key}=${JSON.stringify(value)}`);
     }
-    args.push(task.arm === 'specship' || task.arm === 'specship-dsh' ? `$spec\n${prompt}\nUse lean supervision: send the task to the configured Ship agent promptly with a compact brief; Ship owns repository investigation, coding, debugging, and test execution. Do not perform implementation reconnaissance first or repeat Ship's tests. Wait silently during dispatch. Review the returned report and one targeted diff against the original request; rely on runner checks and criterion evidence. Request further Ship work only for a concrete defect or missing evidence. Accept the exact report when satisfied. If blocked, stop and explain; do not implement the fix yourself.` : prompt);
+    args.push(task.arm === 'codex-opencode' ? directPrompt(task.problem_statement, task.ship) : task.arm === 'specship' || task.arm === 'specship-dsh' ? `$spec\n${prompt}\nUse lean supervision: send the task to the configured Ship agent promptly with an outcome-based compact brief; Ship owns repository investigation, coding, debugging, and test execution. Do not perform implementation reconnaissance first or routinely repeat Ship's tests. Wait silently during dispatch. Review the actual diff and targeted unchanged source against the original request. Use runner checks and criterion evidence, and request a focused independent witness for concrete defects or missing coverage, including changed existing test assumptions. Accept the exact report only when those gaps are resolved. If blocked, stop and explain; do not implement the fix yourself.` : prompt);
   }
   const events = [], stderr = [];
   const child = spawn(executable, args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -109,6 +103,15 @@ try {
   const parsed = jsonLines(text);
   result.agent_exit_code = exit;
   if (task.arm !== 'ship') result.spec_usage = codexUsage(parsed);
+  if (task.arm === 'codex-opencode') {
+    result.accepted = directAcceptance(parsed);
+    await writeFile(`${output}/protocol.json`, JSON.stringify({ workflow: 'codex-opencode', accepted: result.accepted, verdict_source: 'final_supervisor_message' }, null, 2));
+    // Discover all worker sessions from durable usage, including resumed sessions.
+    // A supervisor verdict alone is insufficient evidence that delegation occurred.
+    const evidence = await readShipUsage('/root/.local/share/opencode/opencode.db', { since: started, model: task.ship.model, reasoningIsSeparate: task.ship.rates?.reasoning_is_separate });
+    for (const session of evidence.sessions) sessions.add(session);
+    result.direct_delegation_observed = evidence.observed !== null;
+  }
   if (task.arm === 'ship') for (const event of parsed) if (event.sessionID) sessions.add(event.sessionID);
   if (task.arm === 'specship' || task.arm === 'specship-dsh') {
     const states = [];
@@ -152,7 +155,7 @@ try {
     result.ship_usage_source = 'dsh_unavailable';
     result.ship_usage_model_matches = null;
   }
-  const finished = exit === 0 && !parsed.some(e => ['turn.failed', 'error'].includes(e.type)) && (task.arm === 'ship' || result.spec_usage !== null) && (!result.arm.startsWith('specship') || result.accepted === true);
+  const finished = exit === 0 && !parsed.some(e => ['turn.failed', 'error'].includes(e.type)) && (task.arm === 'ship' || result.spec_usage !== null) && (!result.arm.startsWith('specship') || result.accepted === true) && (task.arm !== 'codex-opencode' || result.accepted === true && result.direct_delegation_observed === true && result.ship_usage_model_matches === true);
   result.status = finished ? 'completed' : 'agent_failure';
 } catch (error) { result.error = error.message; }
 if (usesOpenCodeShip(task.arm)) {
